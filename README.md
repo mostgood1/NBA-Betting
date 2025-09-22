@@ -206,3 +206,31 @@ Routing:
 Notes:
 - The UI is static; all data files it reads (CSV/JSON) are bundled in the repo and served statically.
 - To update slate data/odds snapshots, commit updated files and push; Render will redeploy automatically.
+
+## Admin endpoints (optional)
+
+For parity with NFL-Betting, the Flask server exposes lightweight admin endpoints:
+
+- Start a daily update job:
+	- GET/POST `/api/admin/daily-update?push=1` (push optional)
+- Check job status and logs:
+	- GET `/api/admin/daily-update/status?tail=200`
+
+Auth:
+- If `ADMIN_KEY` is set in environment, include it via query `?key=...` or header `X-Admin-Key: ...`.
+- If no key is set, only local/lan clients are allowed (127.0.0.1 or private ranges like 192.168.x.x) for convenience.
+
+What the job does:
+- It’s a placeholder that can run CLI tasks (e.g., predictions or exports) and append logs under `logs/`.
+- Git push is attempted if `push=1` and Git is configured with write access.
+
+Examples (PowerShell):
+
+```powershell
+# Start job
+$resp = Invoke-RestMethod http://localhost:5050/api/admin/daily-update
+$resp
+
+# Poll status
+Invoke-RestMethod http://localhost:5050/api/admin/daily-update/status?tail=100 | Format-List
+```
