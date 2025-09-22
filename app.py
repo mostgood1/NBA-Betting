@@ -16,8 +16,8 @@ app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="/web")
 
 @app.route("/")
 def root():
-    # Make the NBA slate the homepage (keeps relative paths working)
-    return redirect("/web/")
+    # Make the NBA slate the homepage (explicitly target index.html under /web)
+    return redirect("/web/index.html")
 
 
 @app.route("/web/")
