@@ -1,11 +1,14 @@
 services:
   - type: web
-    name: nba-betting-frontend
-    env: static
-    buildCommand: ""
-    staticPublishPath: .
-    routes:
-      # Make the NBA slate the homepage without breaking data asset paths
-      - type: redirect
-        source: /
-        destination: /web/
+    name: nba-betting
+    env: python
+    plan: free
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: bash start.sh
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      - key: PYTHONUNBUFFERED
+        value: "1"

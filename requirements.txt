@@ -12,3 +12,5 @@ matplotlib>=3.9
 seaborn>=0.13
 requests-cache>=1.2
 nba_api>=1.5.0
+Flask>=3.0
+gunicorn>=21.2
