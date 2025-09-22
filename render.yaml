@@ -1,5 +1,5 @@
 services:
-  - type: static_site
+  - type: web
     name: nba-betting-frontend
     env: static
     buildCommand: ""
