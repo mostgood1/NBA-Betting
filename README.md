@@ -169,3 +169,22 @@ This produces an edges CSV you can sort by EV or edge for actionable picks witho
 
 - Rscript not found: install R, add `Rscript.exe` to PATH, or set `RSCRIPT_PATH` to the full path.
 - OddsAPI 422 for player props: the API may not have props at your snapshot timestamp; re-run with `--mode current` near tip-off or try a different date.
+
+## Frontend & Render Deployment
+
+The static frontend lives in `web/` and loads CSV/JSON from the repo. A `render.yaml` is included to deploy as a Render Static Site and make the NBA slate the site root.
+
+Render settings (via render.yaml):
+- Type: static_site
+- Publish path: `.` (repo root)
+- Build command: none (static)
+- Route: rewrite `/(.*)` to `/web/$1` so `/` serves `web/index.html` and assets under `/web/`.
+
+Deploy steps:
+1) Push this repo to GitHub (done if you see this on GitHub).
+2) In Render, create a Blueprint from the GitHub repo; it will detect `render.yaml` and provision the Static Site.
+3) Open the Render URL; the NBA slate loads at the root (`/`).
+
+Notes:
+- Static sites on Render do not use a start command; files are served automatically from the publish directory.
+- Update predictions/odds/schedule CSV/JSON and push to redeploy updated content.

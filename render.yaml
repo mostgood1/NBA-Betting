@@ -5,6 +5,7 @@ services:
     buildCommand: ""
     staticPublishPath: .
     routes:
+      # Make the NBA slate the homepage without breaking data asset paths
       - type: redirect
         source: /
         destination: /web/
