@@ -1,0 +1,4 @@
+# Keep this directory but ignore its contents by default
+*
+!.gitignore
+!README.md

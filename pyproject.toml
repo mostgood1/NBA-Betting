@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nba-betting"
+version = "0.1.0"
+description = "NBA betting predictor pipeline"
+authors = [{name = "You"}]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "requests>=2.32.3",
+    "beautifulsoup4>=4.12.3",
+    "lxml>=5.3",
+    "tenacity>=8.5",
+    "pyarrow>=17.0",
+    "scikit-learn>=1.5",
+    "click>=8.1",
+    "rich>=13.7",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

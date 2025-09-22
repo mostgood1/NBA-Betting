@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NBA Slate</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1>NBA Slate</h1>
+      <div class="controls">
+        <label for="datePicker" class="sr-only">Select date</label>
+        <input type="date" id="datePicker" title="Select date" />
+        <label class="toggle"><input type="checkbox" id="resultsToggle" /> Show results</label>
+        <label class="toggle"><input type="checkbox" id="hideOdds" /> Hide Odds</label>
+        <button id="todayBtn">Today</button>
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    <section id="summary" class="summary"></section>
+    <section id="games" class="games-grid"></section>
+  </main>
+  <footer class="site-footer">
+    <div class="container">
+      <span>Data: NBA CDN schedule; Model recs via predictions_YYYY-MM-DD.csv</span>
+    </div>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

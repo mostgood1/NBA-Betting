@@ -1,0 +1,52 @@
+TEAM_ALIASES = {
+    # Common aliases -> Basketball-Reference display names
+    "la lakers": "Los Angeles Lakers",
+    "l.a. lakers": "Los Angeles Lakers",
+    "lakers": "Los Angeles Lakers",
+    "gsw": "Golden State Warriors",
+    "warriors": "Golden State Warriors",
+    "clippers": "Los Angeles Clippers",
+    "la clippers": "Los Angeles Clippers",
+    "l.a. clippers": "Los Angeles Clippers",
+    "boston": "Boston Celtics",
+    "celtics": "Boston Celtics",
+    # NBA abbreviations -> full names
+    "atl": "Atlanta Hawks",
+    "bos": "Boston Celtics",
+    "bkn": "Brooklyn Nets",
+    "cha": "Charlotte Hornets",
+    "chi": "Chicago Bulls",
+    "cle": "Cleveland Cavaliers",
+    "dal": "Dallas Mavericks",
+    "den": "Denver Nuggets",
+    "det": "Detroit Pistons",
+    "gsw": "Golden State Warriors",
+    "hou": "Houston Rockets",
+    "ind": "Indiana Pacers",
+    "lac": "Los Angeles Clippers",
+    "lal": "Los Angeles Lakers",
+    "mem": "Memphis Grizzlies",
+    "mia": "Miami Heat",
+    "mil": "Milwaukee Bucks",
+    "min": "Minnesota Timberwolves",
+    "nop": "New Orleans Pelicans",
+    "no": "New Orleans Pelicans",
+    "nyk": "New York Knicks",
+    "okc": "Oklahoma City Thunder",
+    "orl": "Orlando Magic",
+    "phi": "Philadelphia 76ers",
+    "phx": "Phoenix Suns",
+    "por": "Portland Trail Blazers",
+    "sac": "Sacramento Kings",
+    "sas": "San Antonio Spurs",
+    "sa": "San Antonio Spurs",
+    "tor": "Toronto Raptors",
+    "uta": "Utah Jazz",
+    "utah": "Utah Jazz",
+    "was": "Washington Wizards",
+}
+
+
+def normalize_team(name: str) -> str:
+    key = (name or "").strip().lower()
+    return TEAM_ALIASES.get(key, name)

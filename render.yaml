@@ -1,0 +1,10 @@
+services:
+  - type: static_site
+    name: nba-betting-frontend
+    env: static
+    buildCommand: ""
+    staticPublishPath: .
+    routes:
+      - type: redirect
+        source: /
+        destination: /web/
