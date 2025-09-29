@@ -284,10 +284,11 @@ async function maybeLoadPropsEdges(dateStr){
 
 async function maybeLoadOdds(dateStr){
   state.oddsByKey.clear();
+  // Prefer freshly fetched Bovada game odds over older consensus files
   const candidates = [
+    `../data/processed/game_odds_${dateStr}.csv`,
     `../data/processed/closing_lines_${dateStr}.csv`,
     `../data/processed/odds_${dateStr}.csv`,
-    `../data/processed/game_odds_${dateStr}.csv`,
     `../data/processed/market_${dateStr}.csv`,
   ];
   let text=null;
@@ -332,18 +333,41 @@ async function maybeLoadOdds(dateStr){
       home_spread = s;
       away_spread = (Number.isFinite(s) ? -s : null);
     }
-    state.oddsByKey.set(key, {
-      home_ml: hmlCol ? Number(r[idx[hmlCol]]) : null,
-      away_ml: amlCol ? Number(r[idx[amlCol]]) : null,
-      home_spread,
-      away_spread,
-      total: totCol ? Number(r[idx[totCol]]) : null,
+    // Coerce odds and sanitize zeros (0 means missing/invalid from some feeds)
+    const mlH = hmlCol ? Number(r[idx[hmlCol]]) : null;
+    const mlA = amlCol ? Number(r[idx[amlCol]]) : null;
+    const totV = totCol ? Number(r[idx[totCol]]) : null;
+    const hsPrice = hSprPriceCol ? Number(r[idx[hSprPriceCol]]) : null;
+    const asPrice = aSprPriceCol ? Number(r[idx[aSprPriceCol]]) : null;
+    const toPrice = totOverPriceCol ? Number(r[idx[totOverPriceCol]]) : null;
+    const tuPrice = totUnderPriceCol ? Number(r[idx[totUnderPriceCol]]) : null;
+    // Basic plausibility filters to drop non–full-game junk that may sneak into CSVs
+    const book = bookCol ? String(r[idx[bookCol]] || '').toLowerCase() : '';
+    let totClean = (totV===0 ? null : totV);
+    if (Number.isFinite(totClean) && totClean < 100) {
+      // NBA game totals shouldn't be this low; likely a player/period line -> ignore
+      totClean = null;
+    }
+    let hsClean = Number.isFinite(home_spread) ? Number(home_spread) : null;
+    if (hsClean!=null && Math.abs(hsClean) > 60) hsClean = null;
+    let asClean = Number.isFinite(away_spread) ? Number(away_spread) : (hsClean!=null? -hsClean : null);
+    const rec = {
+      home_ml: (mlH===0 ? null : mlH),
+      away_ml: (mlA===0 ? null : mlA),
+      home_spread: hsClean,
+      away_spread: asClean,
+      total: totClean,
       bookmaker: bookCol ? r[idx[bookCol]] : null,
-      home_spread_price: hSprPriceCol ? Number(r[idx[hSprPriceCol]]) : null,
-      away_spread_price: aSprPriceCol ? Number(r[idx[aSprPriceCol]]) : null,
-      total_over_price: totOverPriceCol ? Number(r[idx[totOverPriceCol]]) : null,
-      total_under_price: totUnderPriceCol ? Number(r[idx[totUnderPriceCol]]) : null,
-    });
+      home_spread_price: (hsPrice===0 ? null : hsPrice),
+      away_spread_price: (asPrice===0 ? null : asPrice),
+      total_over_price: (toPrice===0 ? null : toPrice),
+      total_under_price: (tuPrice===0 ? null : tuPrice),
+    };
+    // Skip if all key fields are missing
+    if (rec.home_ml==null && rec.away_ml==null && rec.total==null && rec.home_spread==null) {
+      continue;
+    }
+    state.oddsByKey.set(key, rec);
   }
 }
 

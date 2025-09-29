@@ -3,7 +3,10 @@ from __future__ import annotations
 import pandas as pd
 import requests
 from datetime import datetime
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo  # Python 3.9+
+except Exception:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
 from typing import Any
 
 from .teams import normalize_team
@@ -178,13 +181,22 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
     Returns a normalized DataFrame with columns:
       - date, commence_time, home_team, away_team, home_ml, away_ml, home_spread, away_spread, total, bookmaker
     """
-    # Match by US/Eastern calendar day to align with slate dates
-    et = ZoneInfo("US/Eastern")
-    ts = pd.to_datetime(date)
-    if ts.tzinfo is None:
-        target_et = ts.tz_localize(et).date()
+    # Match by US/Eastern calendar day to align with slate dates; fallback to UTC if tzdata missing
+    if ZoneInfo is not None:
+        try:
+            et = ZoneInfo("US/Eastern")
+        except Exception:
+            et = None
     else:
-        target_et = ts.tz_convert(et).date()
+        et = None
+    ts = pd.to_datetime(date, utc=True)
+    if et is not None:
+        try:
+            target_et = ts.tz_convert(et).date()
+        except Exception:
+            target_et = ts.date()
+    else:
+        target_et = ts.date()
     rows: list[dict] = []
     payloads = []
     for url in ENDPOINTS:
@@ -203,7 +215,13 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
                 for ev in (events or []):
                     try:
                         dt = _to_dt_utc(ev.get("startTime"))
-                        ct = dt.tz_convert(et).date() if dt is not None else None
+                        if dt is not None:
+                            try:
+                                ct = dt.tz_convert(et).date() if et is not None else dt.date()
+                            except Exception:
+                                ct = dt.date()
+                        else:
+                            ct = None
                     except Exception:
                         ct = None
                     if ct != target_et:
