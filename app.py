@@ -275,6 +275,28 @@ def _ensure_logs_dir() -> Path:
     return p
 
 
+def _find_fallback_odds_for_date(date_str: str) -> Optional[Path]:
+    """Return best available non-Bovada odds file for the given date, if any.
+
+    Preference order:
+      1) closing_lines_{date}.csv
+      2) odds_{date}.csv
+      3) market_{date}.csv
+    """
+    candidates = [
+        BASE_DIR / "data" / "processed" / f"closing_lines_{date_str}.csv",
+        BASE_DIR / "data" / "processed" / f"odds_{date_str}.csv",
+        BASE_DIR / "data" / "processed" / f"market_{date_str}.csv",
+    ]
+    for p in candidates:
+        try:
+            if p.exists() and p.is_file():
+                return p
+        except Exception:
+            continue
+    return None
+
+
 def _git_commit_and_push(msg: str) -> tuple[bool, str]:
     """Commit and push changes to the current branch.
 
@@ -935,16 +957,35 @@ def api_cron_refresh_bovada():
         df = _fetch_bovada_odds_current(pd.to_datetime(dt))
         rows = 0 if df is None else len(df)
         out = BASE_DIR / "data" / "processed" / f"game_odds_{d}.csv"
+        used_fallback = False
+        fallback_path = None
         if df is not None and not df.empty:
             out.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(out, index=False)
+        else:
+            # Try fallback to consensus/closing lines if Bovada has nothing
+            fb = _find_fallback_odds_for_date(d)
+            if fb is not None:
+                try:
+                    o = pd.read_csv(fb)
+                    if not o.empty:
+                        out.parent.mkdir(parents=True, exist_ok=True)
+                        o.to_csv(out, index=False)
+                        rows = int(len(o))
+                        used_fallback = True
+                        fallback_path = str(fb)
+                except Exception:
+                    pass
         # Record cron meta best-effort
         try:
-            _cron_meta_update("refresh_bovada", {
+            meta = {
                 "date": d,
                 "rows": int(rows),
                 "output": str(out),
-            })
+            }
+            if used_fallback:
+                meta.update({"used_fallback": True, "fallback_path": fallback_path})
+            _cron_meta_update("refresh_bovada", meta)
         except Exception:
             pass
         # Optional push
@@ -952,7 +993,11 @@ def api_cron_refresh_bovada():
         if str(request.args.get("push", "0")).lower() in {"1","true","yes"}:
             ok, detail = _git_commit_and_push(msg=f"refresh-bovada {d}")
             pushed = bool(ok); push_detail = detail
-        return jsonify({"date": d, "rows": int(rows), "output": str(out), "pushed": pushed, "push_detail": push_detail})
+        return jsonify({
+            "date": d, "rows": int(rows), "output": str(out),
+            "used_fallback": used_fallback, "fallback_path": fallback_path,
+            "pushed": pushed, "push_detail": push_detail,
+        })
     except Exception as e:
         return jsonify({"error": f"bovada fetch failed: {e}"}), 500
 
