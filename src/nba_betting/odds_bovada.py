@@ -30,11 +30,13 @@ def _safe_get(d: dict, *keys: str, default=None):
     return cur
 
 
-def _extract_markets(ev: dict) -> dict:
-    """Extract Moneyline, Spread, and Total from Bovada event JSON.
+def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str | None = None) -> dict:
+    """Extract Moneyline, Spread, and Total from Bovada event JSON for full-game markets.
 
-    Returns dict with keys: home_ml, away_ml, home_spread, away_spread, total.
-    Values may be None if not present.
+    - Filters out quarters/halves and alternate-line markets to avoid bad values (e.g., 24.5 total).
+    - If outcome type isn't 'home'/'away', attempts to map by outcome/team description against provided home/away names.
+
+    Returns dict with keys: home_ml, away_ml, home_spread, away_spread, total, and price fields.
     """
     out = {
         "home_ml": None, "away_ml": None,
@@ -45,12 +47,28 @@ def _extract_markets(ev: dict) -> dict:
     dgs = ev.get("displayGroups", []) or []
     # Flatten markets
     for dg in dgs:
+        dg_desc = str(dg.get("description") or dg.get("name") or "").lower()
+        # Prefer "game lines"/full game groups; still allow others if period filter passes
         for m in dg.get("markets", []) or []:
             mtype = (m.get("description") or m.get("marketType") or "").lower()
+            # Skip obvious non-full-game markets
+            period = m.get("period") or {}
+            period_desc = str(period.get("description") or period.get("abbreviation") or "").lower()
+            if any(k in period_desc for k in ["quarter", "1st quarter", "2nd quarter", "3rd quarter", "4th quarter", "half", "1st half", "2nd half"]):
+                continue
+            if "alternate" in mtype:
+                # Avoid alternate lines to keep a single canonical line
+                continue
+            # If display group doesn't look like full game, require period_desc that looks like game/match
+            if ("game lines" not in dg_desc) and not any(k in period_desc for k in ["game", "match", "full", "regular time", "regulation"]):
+                # Allow totals/spreads named as game types as a fallback
+                if not any(k in mtype for k in ["moneyline", "spread", "point spread", "total"]):
+                    continue
             # Moneyline
             if "moneyline" in mtype:
                 for oc in m.get("outcomes", []) or []:
-                    typ = (oc.get("type") or oc.get("description") or "").lower()
+                    typ = (oc.get("type") or "").lower()
+                    desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
                     price = _safe_get(oc, "price", "american")
                     if price is None:
                         continue
@@ -58,15 +76,17 @@ def _extract_markets(ev: dict) -> dict:
                         price = int(str(price).replace("+", "")) if str(price).startswith("+") else int(price)
                     except Exception:
                         continue
-                    if typ == "home":
+                    # Map to home/away using explicit type when present, else by name matching
+                    if typ == "home" or (typ == "" and home_norm and (home_norm in desc)):
                         out["home_ml"] = price
-                    elif typ == "away":
+                    elif typ == "away" or (typ == "" and away_norm and (away_norm in desc)):
                         out["away_ml"] = price
             # Point spread
             elif "spread" in mtype or "point spread" in mtype:
                 # Home/Away outcomes with handicap
                 for oc in m.get("outcomes", []) or []:
-                    typ = (oc.get("type") or oc.get("description") or "").lower()
+                    typ = (oc.get("type") or "").lower()
+                    desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
                     price_obj = oc.get("price") or {}
                     handicap = _safe_get(oc, "price", "handicap") or oc.get("handicap")
                     try:
@@ -83,11 +103,11 @@ def _extract_markets(ev: dict) -> dict:
                             spr_price = int(str(s).replace("+", "")) if str(s).startswith("+") else int(s)
                     except Exception:
                         spr_price = None
-                    if typ == "home":
+                    if typ == "home" or (typ == "" and home_norm and (home_norm in desc)):
                         out["home_spread"] = hval
                         if spr_price is not None:
                             out["home_spread_price"] = spr_price
-                    elif typ == "away":
+                    elif typ == "away" or (typ == "" and away_norm and (away_norm in desc)):
                         out["away_spread"] = hval
                         if spr_price is not None:
                             out["away_spread_price"] = spr_price
@@ -103,6 +123,9 @@ def _extract_markets(ev: dict) -> dict:
                     except Exception:
                         hval = None
                     if hval is None:
+                        continue
+                    # Only set total when period indicates a game/match or in a group named game lines
+                    if ("game lines" not in dg_desc) and not any(k in period_desc for k in ["game", "match", "full", "regular"]):
                         continue
                     out["total"] = hval
                     # capture over/under prices
@@ -204,7 +227,10 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
                             home_name = home_name or h
                     home = normalize_team(str(home_name or "").strip())
                     away = normalize_team(str(away_name or "").strip())
-                    mk = _extract_markets(ev)
+                    # Normalize to lowercase for internal name matching
+                    home_l = home.lower()
+                    away_l = away.lower()
+                    mk = _extract_markets(ev, home_norm=home_l, away_norm=away_l)
                     rows.append({
                         "date": str(target_et),
                         "commence_time": dt.isoformat() if dt is not None else ev.get("startTime"),
