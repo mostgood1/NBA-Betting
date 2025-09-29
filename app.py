@@ -10,7 +10,7 @@ import threading
 import subprocess
 import shlex
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -73,6 +73,26 @@ def data_static(path: str):
     # Serve data files (JSON/CSV) referenced by the frontend, e.g., /data/processed/*.json
     data_dir = BASE_DIR / "data"
     return send_from_directory(str(data_dir), path)
+
+
+@app.route("/predictions_<date>.csv")
+def serve_predictions_csv(date: str):
+    """Serve predictions_YYYY-MM-DD.csv from repo root for frontend CSV fetches."""
+    p = BASE_DIR / f"predictions_{date}.csv"
+    if not p.exists():
+        from flask import abort
+        abort(404)
+    return send_from_directory(str(BASE_DIR), p.name)
+
+
+@app.route("/props_predictions_<date>.csv")
+def serve_props_predictions_csv(date: str):
+    """Serve props_predictions_YYYY-MM-DD.csv from repo root for frontend CSV fetches."""
+    p = BASE_DIR / f"props_predictions_{date}.csv"
+    if not p.exists():
+        from flask import abort
+        abort(404)
+    return send_from_directory(str(BASE_DIR), p.name)
 
 
 @app.route("/health")
@@ -214,6 +234,59 @@ def _ensure_logs_dir() -> Path:
     return p
 
 
+def _git_commit_and_push(msg: str) -> tuple[bool, str]:
+    """Commit and push changes to the current branch.
+
+    Auth methods:
+    - GH_TOKEN or GIT_PAT env: used to set a push URL for 'origin' without altering fetch URL.
+    - GH_NAME/GH_EMAIL env: configure git user identity.
+    Returns (ok, detail).
+    """
+    try:
+        env = {**os.environ}
+        # Configure identity if provided
+        name = os.environ.get("GH_NAME") or os.environ.get("GIT_NAME")
+        email = os.environ.get("GH_EMAIL") or os.environ.get("GIT_EMAIL")
+        if name:
+            subprocess.run(["git", "config", "user.name", name], cwd=str(BASE_DIR), check=False)
+        if email:
+            subprocess.run(["git", "config", "user.email", email], cwd=str(BASE_DIR), check=False)
+        # Determine current branch
+        try:
+            branch = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(BASE_DIR), text=True).strip()
+            if not branch or branch == "HEAD":
+                branch = os.environ.get("GIT_BRANCH", "main")
+        except Exception:
+            branch = os.environ.get("GIT_BRANCH", "main")
+        # Set push URL with token if present
+        token = os.environ.get("GH_TOKEN") or os.environ.get("GIT_PAT")
+        push_url_set = False
+        if token:
+            try:
+                origin = subprocess.check_output(["git", "remote", "get-url", "origin"], cwd=str(BASE_DIR), text=True).strip()
+                # Expect https URL; fall back to origin if parsing fails
+                url = origin
+                if origin.startswith("https://") and "@" not in origin:
+                    # Insert token; use x-access-token as username to avoid leaking real usernames
+                    url = origin.replace("https://", f"https://x-access-token:{token}@")
+                # Set push URL only
+                subprocess.run(["git", "remote", "set-url", "--push", "origin", url], cwd=str(BASE_DIR), check=False)
+                push_url_set = True
+            except Exception:
+                push_url_set = False
+        # Stage and commit (allow empty to create a heartbeat commit if needed)
+        subprocess.run(["git", "add", "-A"], cwd=str(BASE_DIR), check=False)
+        subprocess.run(["git", "commit", "-m", msg, "--allow-empty"], cwd=str(BASE_DIR), check=False)
+        # Rebase then push
+        subprocess.run(["git", "pull", "--rebase"], cwd=str(BASE_DIR), check=False)
+        rc = subprocess.run(["git", "push", "origin", f"HEAD:{branch}"], cwd=str(BASE_DIR), check=False)
+        ok = (rc.returncode == 0)
+        detail = f"pushed to {branch}; push_url={'set' if push_url_set else 'default'}"
+        return ok, detail
+    except Exception as e:
+        return False, f"git push error: {e}"
+
+
 def _run_to_file(cmd: list[str] | str, log_fp: Path, cwd: Path | None = None, env: dict | None = None) -> int:
     if isinstance(cmd, list):
         popen_cmd = cmd
@@ -264,6 +337,25 @@ def _admin_auth_ok(req) -> bool:
     return (req.args.get("key") == key) or (req.headers.get("X-Admin-Key") == key)
 
 
+def _cron_auth_ok(req) -> bool:
+    """Cron auth using CRON_TOKEN. Accepts:
+    - Authorization: Bearer <token>
+    - X-Cron-Token: <token>
+    - ?token=<token>
+    If CRON_TOKEN is unset, fall back to admin auth policy for local/dev.
+    """
+    token = os.environ.get("CRON_TOKEN")
+    if not token:
+        # fall back to admin auth (local dev convenience)
+        return _admin_auth_ok(req)
+    auth = (req.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer ") and auth.split(" ", 1)[1] == token:
+        return True
+    if (req.headers.get("X-Cron-Token") == token) or (req.args.get("token") == token):
+        return True
+    return False
+
+
 def _daily_update_job(do_push: bool) -> None:
     _job_state["running"] = True
     _job_state["started_at"] = datetime.utcnow().isoformat()
@@ -281,7 +373,7 @@ def _daily_update_job(do_push: bool) -> None:
             py = (Path(os.environ.get("VIRTUAL_ENV") or "") / "Scripts" / "python.exe")
             if not py.exists():
                 py = "python"
-        env = {"PYTHONPATH": str(BASE_DIR)}
+        env = {"PYTHONPATH": str(SRC_DIR)}
         cmds: list[list[str]] = []
         # Light, safe steps for static UI refresh; customize as needed.
         # Example: rebuild closing lines snapshot if CLI supports it.
@@ -293,7 +385,7 @@ def _daily_update_job(do_push: bool) -> None:
         rc_total = 0
         for c in cmds:
             _append_log(f"Running: {' '.join(c)}")
-            rc = _run_to_file(c, log_file, cwd=BASE_DIR)
+            rc = _run_to_file(c, log_file, cwd=BASE_DIR, env=env)
             rc_total += int(rc)
             _append_log(f"Exit code: {rc}")
             if rc != 0:
@@ -716,13 +808,14 @@ def api_cron_refresh_bovada():
 
     Query params:
       - date (required): YYYY-MM-DD
-    Auth: same as admin (uses ADMIN_KEY if set; otherwise allows local/LAN).
+    Auth: CRON_TOKEN (preferred) or ADMIN_KEY (fallback if CRON_TOKEN unset).
     """
-    if not _admin_auth_ok(request):
+    if not (_cron_auth_ok(request) or _admin_auth_ok(request)):
         return jsonify({"error": "unauthorized"}), 401
     d = _parse_date_param(request, default_to_today=False)
     if not d:
-        return jsonify({"error": "missing date"}), 400
+        # Default to yesterday (UTC) for closing lines capture
+        d = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
     if _fetch_bovada_odds_current is None:
         return jsonify({"error": "bovada fetcher not available"}), 500
     try:
@@ -736,9 +829,276 @@ def api_cron_refresh_bovada():
         if df is not None and not df.empty:
             out.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(out, index=False)
-        return jsonify({"date": d, "rows": int(rows), "output": str(out)})
+        # Optional push
+        pushed = None; push_detail = None
+        if str(request.args.get("push", "0")).lower() in {"1","true","yes"}:
+            ok, detail = _git_commit_and_push(msg=f"refresh-bovada {d}")
+            pushed = bool(ok); push_detail = detail
+        return jsonify({"date": d, "rows": int(rows), "output": str(out), "pushed": pushed, "push_detail": push_detail})
     except Exception as e:
         return jsonify({"error": f"bovada fetch failed: {e}"}), 500
+
+
+@app.route("/api/cron/capture-closing", methods=["POST", "GET"])
+def api_cron_capture_closing():
+    """Export consensus closing lines CSV for a given date under data/processed.
+
+    Query params:
+      - date (required): YYYY-MM-DD
+    """
+    if not _cron_auth_ok(request):
+        return jsonify({"error": "unauthorized"}), 401
+    d = _parse_date_param(request, default_to_today=False)
+    if not d:
+        return jsonify({"error": "missing date"}), 400
+    # Choose python executable
+    py = os.environ.get("PYTHON", (os.environ.get("VIRTUAL_ENV") or "") + "/bin/python")
+    if not py or not Path(str(py)).exists():
+        py_win = (Path(os.environ.get("VIRTUAL_ENV") or "") / "Scripts" / "python.exe")
+        py = str(py_win) if py_win.exists() else "python"
+    logs_dir = _ensure_logs_dir(); stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    log_file = logs_dir / f"cron_capture_closing_{d}_{stamp}.log"
+    try:
+        env = {"PYTHONPATH": str(SRC_DIR)}
+        rc = _run_to_file([str(py), "-m", "nba_betting.cli", "export-closing-lines-csv", "--date", d], log_file, cwd=BASE_DIR, env=env)
+        out = BASE_DIR / "data" / "processed" / f"closing_lines_{d}.csv"
+        rows = 0
+        if out.exists():
+            try:
+                rows = int(sum(1 for _ in out.open("r", encoding="utf-8", errors="ignore")) - 1)
+            except Exception:
+                try:
+                    rows = len(pd.read_csv(out))
+                except Exception:
+                    rows = 0
+        # Optional push
+        pushed = None; push_detail = None
+        if str(request.args.get("push", "0")).lower() in {"1","true","yes"}:
+            ok, detail = _git_commit_and_push(msg=f"capture closing lines {d}")
+            pushed = bool(ok); push_detail = detail
+        return jsonify({"date": d, "rc": int(rc), "output": str(out), "rows": int(rows), "log_file": str(log_file), "pushed": pushed, "push_detail": push_detail})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cron/predict-date", methods=["POST", "GET"])
+def api_cron_predict_date():
+    """Run predict-date for the given date to refresh predictions_YYYY-MM-DD.csv and odds CSV."""
+    if not _cron_auth_ok(request):
+        return jsonify({"error": "unauthorized"}), 401
+    d = _parse_date_param(request, default_to_today=True)
+    # Choose python executable
+    py = os.environ.get("PYTHON", (os.environ.get("VIRTUAL_ENV") or "") + "/bin/python")
+    if not py or not Path(str(py)).exists():
+        py_win = (Path(os.environ.get("VIRTUAL_ENV") or "") / "Scripts" / "python.exe")
+        py = str(py_win) if py_win.exists() else "python"
+    logs_dir = _ensure_logs_dir(); stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    log_file = logs_dir / f"cron_predict_date_{d}_{stamp}.log"
+    try:
+        env = {"PYTHONPATH": str(SRC_DIR)}
+        rc = _run_to_file([str(py), "-m", "nba_betting.cli", "predict-date", "--date", d], log_file, cwd=BASE_DIR, env=env)
+        pred = BASE_DIR / f"predictions_{d}.csv"
+        odds = BASE_DIR / "data" / "processed" / f"game_odds_{d}.csv"
+        n_pred = int(len(pd.read_csv(pred))) if pred.exists() else 0
+        n_odds = int(len(pd.read_csv(odds))) if odds.exists() else 0
+        pushed = None; push_detail = None
+        if str(request.args.get("push", "0")).lower() in {"1","true","yes"}:
+            ok, detail = _git_commit_and_push(msg=f"predict-date {d}")
+            pushed = bool(ok); push_detail = detail
+        return jsonify({
+            "date": d,
+            "rc": int(rc),
+            "predictions": str(pred) if pred.exists() else None,
+            "pred_rows": n_pred,
+            "odds": str(odds) if odds.exists() else None,
+            "odds_rows": n_odds,
+            "log_file": str(log_file),
+            "pushed": pushed,
+            "push_detail": push_detail,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cron/reconcile-games", methods=["POST", "GET"])
+def api_cron_reconcile_games():
+    """Build reconciliation CSV for a date by joining predictions with final scores.
+
+    - Input date defaults to yesterday (UTC) if omitted.
+    - Output: data/processed/recon_games_YYYY-MM-DD.csv
+    - Columns: date, home_team, visitor_team, home_pts, visitor_pts, pred_margin, pred_total, actual_margin, total_actual, margin_error, total_error
+    """
+    if not _cron_auth_ok(request):
+        return jsonify({"error": "unauthorized"}), 401
+    # Date defaults to yesterday
+    d = _parse_date_param(request, default_to_today=False)
+    if not d:
+        d = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+    # Load predictions for that date
+    pred_path = BASE_DIR / f"predictions_{d}.csv"
+    if not pred_path.exists():
+        return jsonify({"error": f"predictions file not found for {d}", "path": str(pred_path)}), 404
+    try:
+        preds = pd.read_csv(pred_path)
+    except Exception as e:
+        return jsonify({"error": f"failed to read predictions: {e}"}), 500
+    # Normalize prediction keys to tricodes using nba_api static teams map
+    try:
+        from nba_api.stats.static import teams as _static_teams  # type: ignore
+        team_list = _static_teams.get_teams()
+        full_to_abbr = {str(t.get('full_name')).upper(): str(t.get('abbreviation')).upper() for t in team_list}
+        # Some common alternate name aliases
+        alt = {
+            "LOS ANGELES CLIPPERS": "LAC",
+            "LA CLIPPERS": "LAC",
+            "PHOENIX SUNS": "PHX",
+            "GOLDEN STATE WARRIORS": "GSW",
+            "SAN ANTONIO SPURS": "SAS",
+            "NEW YORK KNICKS": "NYK",
+            "BROOKLYN NETS": "BKN",
+            "UTAH JAZZ": "UTA",
+        }
+        def to_tri(name: str) -> str:
+            if name is None:
+                return ""
+            s = str(name).strip().upper()
+            if s in full_to_abbr:
+                return full_to_abbr[s]
+            if s in alt:
+                return alt[s]
+            # Already a tri?
+            if len(s) <= 4:
+                return s
+            return s
+        preds = preds.copy()
+        preds["home_tri"] = preds.get("home_team").apply(to_tri)
+        preds["away_tri"] = preds.get("visitor_team").apply(to_tri)
+    except Exception:
+        preds = preds.copy()
+        preds["home_tri"] = preds.get("home_team").astype(str).str.upper()
+        preds["away_tri"] = preds.get("visitor_team").astype(str).str.upper()
+    # Fetch finals from ScoreboardV2
+    if _scoreboardv2 is None:
+        return jsonify({"error": "nba_api not installed"}), 500
+    try:
+        # Harden headers for reliability
+        try:
+            if _nba_http is not None:
+                _nba_http.STATS_HEADERS.update({
+                    'Accept': 'application/json, text/plain, */*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Origin': 'https://www.nba.com',
+                    'Referer': 'https://www.nba.com/stats/',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                    'Connection': 'keep-alive',
+                })
+        except Exception:
+            pass
+        sb = _scoreboardv2.ScoreboardV2(game_date=d, day_offset=0, timeout=30)
+        nd = sb.get_normalized_dict()
+        gh = pd.DataFrame(nd.get("GameHeader", []))
+        ls = pd.DataFrame(nd.get("LineScore", []))
+        out_rows = []
+        if not gh.empty and not ls.empty:
+            cgh = {c.upper(): c for c in gh.columns}
+            cls = {c.upper(): c for c in ls.columns}
+            # Build TEAM_ID -> (TRI, PTS)
+            team_rows = {}
+            for _, r in ls.iterrows():
+                try:
+                    tid = int(r[cls["TEAM_ID"]])
+                    tri = str(r[cls["TEAM_ABBREVIATION"]]).upper()
+                    pts = None
+                    # PTS sometimes available directly
+                    if "PTS" in cls:
+                        try:
+                            pts = int(r[cls["PTS"]])
+                        except Exception:
+                            pts = None
+                    # Try sum of quarters/OT if needed (optional)
+                    team_rows[tid] = {"tri": tri, "pts": pts}
+                except Exception:
+                    continue
+            # For each game, find home/away IDs and map to tri/pts
+            for _, g in gh.iterrows():
+                try:
+                    hid = int(g[cgh["HOME_TEAM_ID"]]); vid = int(g[cgh["VISITOR_TEAM_ID"]])
+                    h = team_rows.get(hid, {}); v = team_rows.get(vid, {})
+                    htri = str(h.get("tri") or "").upper(); vtri = str(v.get("tri") or "").upper()
+                    hpts = h.get("pts"); vpts = v.get("pts")
+                    out_rows.append({"home_tri": htri, "away_tri": vtri, "home_pts": hpts, "visitor_pts": vpts})
+                except Exception:
+                    continue
+        finals = pd.DataFrame(out_rows)
+        # Join predictions to finals by tri pairs
+        if finals.empty:
+            return jsonify({"date": d, "rows": 0, "output": None})
+        merged = preds.merge(finals, on=["home_tri","away_tri"], how="left")
+        # Compute errors
+        def to_float(x):
+            try:
+                return float(x)
+            except Exception:
+                return None
+        merged["pred_margin"] = pd.to_numeric(merged.get("pred_margin"), errors="coerce")
+        merged["pred_total"] = pd.to_numeric(merged.get("pred_total"), errors="coerce")
+        merged["home_pts"] = pd.to_numeric(merged.get("home_pts"), errors="coerce")
+        merged["visitor_pts"] = pd.to_numeric(merged.get("visitor_pts"), errors="coerce")
+        merged["actual_margin"] = merged["home_pts"] - merged["visitor_pts"]
+        merged["total_actual"] = merged[["home_pts","visitor_pts"]].sum(axis=1)
+        merged["margin_error"] = merged["pred_margin"] - merged["actual_margin"]
+        merged["total_error"] = merged["pred_total"] - merged["total_actual"]
+        # Output tidy columns
+        keep = [
+            "date","home_team","visitor_team","home_tri","away_tri",
+            "home_pts","visitor_pts","pred_margin","pred_total",
+            "actual_margin","total_actual","margin_error","total_error"
+        ]
+        # Ensure date column present
+        if "date" not in merged.columns:
+            merged["date"] = d
+        out_df = merged[keep]
+        out = BASE_DIR / "data" / "processed" / f"recon_games_{d}.csv"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out_df.to_csv(out, index=False)
+        # Optional push
+        pushed = None; push_detail = None
+        if str(request.args.get("push", "0")).lower() in {"1","true","yes"}:
+            ok, detail = _git_commit_and_push(msg=f"reconcile games {d}")
+            pushed = bool(ok); push_detail = detail
+        return jsonify({"date": d, "rows": int(len(out_df)), "output": str(out), "pushed": pushed, "push_detail": push_detail})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/cron/daily-update", methods=["POST", "GET"])
+def api_cron_daily_update():
+    """Trigger the daily update job via cron token. Git push is disabled by default for cron."""
+    if not _cron_auth_ok(request):
+        return jsonify({"error": "unauthorized"}), 401
+    if _job_state["running"]:
+        return jsonify({"status": "already-running", "started_at": _job_state["started_at"]}), 409
+    do_push = (str(request.args.get("push", "0")).lower() in {"1", "true", "yes"})
+    t = threading.Thread(target=_daily_update_job, args=(do_push,), daemon=True)
+    t.start()
+    return jsonify({"status": "started", "push": do_push, "started_at": datetime.utcnow().isoformat()}), 202
+
+
+@app.route("/api/cron/config")
+def api_cron_config():
+    """Introspection for cron/admin configuration (safe to expose booleans only)."""
+    try:
+        return jsonify({
+            "have_cron_token": bool(os.environ.get("CRON_TOKEN")),
+            "have_admin_key": bool(os.environ.get("ADMIN_KEY")),
+            "endpoints": [
+                "/api/cron/refresh-bovada",
+                "/api/cron/predict-date",
+                "/api/cron/capture-closing",
+                "/api/cron/daily-update",
+            ],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/admin/daily-update", methods=["POST", "GET"])

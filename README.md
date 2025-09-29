@@ -258,3 +258,42 @@ $resp
 # Poll status
 Invoke-RestMethod http://localhost:5050/api/admin/daily-update/status?tail=100 | Format-List
 ```
+
+## Cron endpoints (NHL parity)
+
+For ops parity with the NHL app, token-gated cron endpoints are provided. Set an environment variable `CRON_TOKEN` in Render (or locally) and use one of:
+
+- Header: `Authorization: Bearer <CRON_TOKEN>`
+- Header: `X-Cron-Token: <CRON_TOKEN>`
+- Query: `?token=<CRON_TOKEN>`
+
+Endpoints:
+- `POST /api/cron/predict-date?date=YYYY-MM-DD` – runs the CLI `predict-date` and writes `predictions_YYYY-MM-DD.csv` and `data/processed/game_odds_YYYY-MM-DD.csv`.
+- `POST /api/cron/refresh-bovada?date=YYYY-MM-DD` – fetches Bovada odds and writes `data/processed/game_odds_YYYY-MM-DD.csv`.
+- `POST /api/cron/capture-closing?date=YYYY-MM-DD` – exports `data/processed/closing_lines_YYYY-MM-DD.csv` from consensus data (build via `make-closing-lines`).
+- `POST /api/cron/daily-update` – triggers the same in-process daily update as `/api/admin/daily-update` (push disabled by default for cron).
+- `GET  /api/cron/config` – safe introspection of available cron/admin booleans.
+
+Render examples (PowerShell syntax equivalent using Invoke-RestMethod):
+
+```powershell
+$base = "https://your-render-url.onrender.com"
+$token = "$(RenderEnv:CRON_TOKEN)"  # or paste token for local testing
+$date = (Get-Date).ToString('yyyy-MM-dd')
+
+# Predict slate and auto-attach odds (OddsAPI if configured, else Bovada fallback)
+Invoke-RestMethod -Method Post -Uri "$base/api/cron/predict-date?date=$date" -Headers @{ Authorization = "Bearer $token" }
+
+# Just refresh Bovada odds
+Invoke-RestMethod -Method Post -Uri "$base/api/cron/refresh-bovada?date=$date" -Headers @{ Authorization = "Bearer $token" }
+
+# Capture consensus closing lines (requires closing_lines.parquet or raw odds)
+Invoke-RestMethod -Method Post -Uri "$base/api/cron/capture-closing?date=$date" -Headers @{ Authorization = "Bearer $token" }
+
+# Kick off daily update sequence (lightweight)
+Invoke-RestMethod -Method Post -Uri "$base/api/cron/daily-update" -Headers @{ Authorization = "Bearer $token" }
+```
+
+Scheduling on Render:
+- Use Render Cron Jobs to hit these endpoints on your cadence. Include the Bearer header.
+- If you attach a Render Disk, ensure `data/` points to that disk path (default here is repo-relative). Update paths in `src/nba_betting/config.py` if needed.

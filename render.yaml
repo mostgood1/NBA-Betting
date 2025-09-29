@@ -3,12 +3,94 @@ services:
     name: nba-betting
     env: python
     plan: free
+    autoDeploy: true
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
     startCommand: bash start.sh
+    healthCheckPath: /health
     envVars:
       - key: FLASK_ENV
         value: production
       - key: PYTHONUNBUFFERED
         value: "1"
+      - key: PYTHONPATH
+        value: src
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: WEB_THREADS
+        value: "4"
+      # Secrets (set values in Render dashboard or via Blueprint instance; 'sync: false' preserves remote values)
+      - key: ADMIN_KEY
+        sync: false
+      - key: CRON_TOKEN
+        sync: false
+      - key: GH_TOKEN
+        sync: false
+      - key: GIT_PAT
+        sync: false
+      - key: GH_NAME
+        sync: false
+      - key: GH_EMAIL
+        sync: false
+      - key: ODDS_API_KEY
+        sync: false
+
+# Optional: scheduled jobs to mirror NHL automation. These call the app's cron endpoints.
+cronJobs:
+  # Hourly: build predictions and odds for today's slate, commit artifacts
+  - name: nba-betting-predict-hourly
+    schedule: "15 * * * *"  # at minute 15 every hour (UTC)
+    env: docker
+    plan: free
+    image: alpine:3.19
+    command: >-
+      sh -lc "apk add --no-cache curl; curl -fsS -X POST \"$BASE_URL/api/cron/predict-date?push=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
+    envVars:
+      - key: BASE_URL
+        # Example: https://nba-betting.onrender.com (set after first deploy)
+        sync: false
+      - key: CRON_TOKEN
+        sync: false
+
+  # Daily: capture yesterday's closing lines, commit artifact
+  - name: nba-betting-capture-closing-daily
+    schedule: "35 12 * * *"  # 12:35 UTC daily (~morning ET)
+    env: docker
+    plan: free
+    image: alpine:3.19
+    command: >-
+      sh -lc "apk add --no-cache curl coreutils; D=$(date -u -d yesterday +%F); curl -fsS -X POST \"$BASE_URL/api/cron/capture-closing?date=$D&push=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
+    envVars:
+      - key: BASE_URL
+        sync: false
+      - key: CRON_TOKEN
+        sync: false
+
+  # Daily: build reconciliation for yesterday, commit artifact
+  - name: nba-betting-reconcile-daily
+    schedule: "5 13 * * *"  # 13:05 UTC daily
+    env: docker
+    plan: free
+    image: alpine:3.19
+    command: >-
+      sh -lc "apk add --no-cache curl coreutils; curl -fsS -X POST \"$BASE_URL/api/cron/reconcile-games?push=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
+    envVars:
+      - key: BASE_URL
+        sync: false
+      - key: CRON_TOKEN
+        sync: false
+
+  # Daily: run the app's daily-update orchestration (lightweight; add push=1 to commit any outputs)
+  - name: nba-betting-daily-update
+    schedule: "0 12 * * *"  # 12:00 UTC daily
+    env: docker
+    plan: free
+    image: alpine:3.19
+    command: >-
+      sh -lc "apk add --no-cache curl; curl -fsS -X POST \"$BASE_URL/api/cron/daily-update?push=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
+    envVars:
+      - key: BASE_URL
+        sync: false
+      - key: CRON_TOKEN
+        sync: false
