@@ -34,6 +34,11 @@
       <div id="cards" class="cards"></div>
     </div>
   </main>
+  <footer>
+    <div class="container footer-meta">
+      <span id="cronMeta">Odds cron: —</span>
+    </div>
+  </footer>
   <script src="/web/app.js"></script>
   <script>
     // Persist admin key for refresh endpoint (optional)
@@ -43,6 +48,24 @@
       const el = document.getElementById('adminKey');
       if (saved) el.value = saved;
       el.addEventListener('change', ()=> sessionStorage.setItem('ADMIN_KEY', el.value || ''));
+    })();
+    // Fetch cron meta and display in footer
+    (async function(){
+      try{
+        const r = await fetch('/api/cron/meta');
+        if (!r.ok) return;
+        const j = await r.json();
+        const el = document.getElementById('cronMeta');
+        if (!el) return;
+        let txt = 'Odds cron: —';
+        const last = j && (j.last_refresh_bovada || null);
+        if (last && last.timestamp){
+          txt = `Odds cron: ${new Date(last.timestamp).toLocaleString()}${last.date?` (date ${last.date})`:''}`;
+        } else if (j && j.fallback_odds_latest && j.fallback_odds_latest.mtime){
+          txt = `Odds file: ${new Date(j.fallback_odds_latest.mtime).toLocaleString()}`;
+        }
+        el.textContent = txt;
+      }catch(_){ /* ignore */ }
     })();
   </script>
 </body>

@@ -788,6 +788,8 @@ function renderDate(dateStr){
       const evU = (pUnder!=null && priceUnder!=null) ? evFromProbAndAmerican(pUnder, priceUnder) : null;
       const clsO = (evO==null? 'neutral' : (evO>0? 'positive' : (evO<0? 'negative' : 'neutral')));
       const clsU = (evU==null? 'neutral' : (evU>0? 'positive' : (evU<0? 'negative' : 'neutral')));
+      const evOBadge = (evO==null? '' : `<span class="ev-badge ${evO>0?'pos':(evO<0?'neg':'neu')}">EV ${(evO>0?'+':'')}${(evO*100).toFixed(1)}%</span>`);
+      const evUBadge = (evU==null? '' : `<span class="ev-badge ${evU>0?'pos':(evU<0?'neg':'neu')}">EV ${(evU>0?'+':'')}${(evU*100).toFixed(1)}%</span>`);
       const book = (odds.bookmaker || '').toString();
       const bookAbbr = book ? (book.toUpperCase().slice(0,2)) : '';
       const bookBadge = bookAbbr ? `<span class=\"book-badge\" title=\"${book}\">${bookAbbr}</span>` : '';
@@ -795,11 +797,17 @@ function renderDate(dateStr){
       const underOddsTxt = (priceUnder!=null? fmtOddsAmerican(priceUnder) : '—');
       const overProbTxt = (pOver!=null? (pOver*100).toFixed(1)+'%' : '—');
       const underProbTxt = (pUnder!=null? (pUnder*100).toFixed(1)+'%' : '—');
+      const isModelOver = (Number.isFinite(tot) && T!=null) ? ((T - tot) >= 0) : false;
+      const isModelUnder = (Number.isFinite(tot) && T!=null) ? ((T - tot) < 0) : false;
+      const modelBadge = `<span class=\"model-badge\" title=\"Model pick\">PICK</span>`;
+      // Push probability (approximate)
+      const pushProb = (pOver!=null && pUnder!=null) ? Math.max(0, 1 - pOver - pUnder) : null;
       chipsTotals = `
         <div class=\"row chips\">
           <div class=\"chip title\">Totals ${Number.isFinite(tot)? tot.toFixed(1): ''}</div>
-          <div class=\"chip ${clsO}\">Over ${overOddsTxt} · ${overProbTxt} ${bookBadge}</div>
-          <div class=\"chip ${clsU}\">Under ${underOddsTxt} · ${underProbTxt} ${bookBadge}</div>
+          <div class=\"chip ${clsO} ${isModelOver?'model-pick':''}\">Over ${overOddsTxt} · ${overProbTxt} ${bookBadge} ${evOBadge} ${isModelOver?modelBadge:''}</div>
+          <div class=\"chip ${clsU} ${isModelUnder?'model-pick':''}\">Under ${underOddsTxt} · ${underProbTxt} ${bookBadge} ${evUBadge} ${isModelUnder?modelBadge:''}</div>
+          ${pushProb!=null ? `<div class=\"chip neutral\">Push · ${(pushProb*100).toFixed(1)}%</div>` : ''}
         </div>`;
       // Moneyline chips
       const hML = odds.home_ml, aML = odds.away_ml;
@@ -814,11 +822,15 @@ function renderDate(dateStr){
       const hOddsTxt = (hML!=null? fmtOddsAmerican(hML): '—');
       const aProbTxt = (pA!=null? (pA*100).toFixed(1)+'%': '—');
       const hProbTxt = (pH!=null? (pH*100).toFixed(1)+'%': '—');
+      const evABadge = (evA==null? '' : `<span class=\"ev-badge ${evA>0?'pos':(evA<0?'neg':'neu')}\">EV ${(evA>0?'+':'')}${(evA*100).toFixed(1)}%</span>`);
+      const evHBadge = (evH==null? '' : `<span class=\"ev-badge ${evH>0?'pos':(evH<0?'neg':'neu')}\">EV ${(evH>0?'+':'')}${(evH*100).toFixed(1)}%</span>`);
+      const isModelHome = (pH!=null) ? (pH >= 0.5) : false;
+      const isModelAway = (pH!=null) ? (!isModelHome) : false;
       chipsMoney = `
         <div class=\"row chips\">
           <div class=\"chip title\">Moneyline</div>
-          <div class=\"chip ${clsA}\">Away ${aOddsTxt} · ${aProbTxt} ${bookBadge}</div>
-          <div class=\"chip ${clsH}\">Home ${hOddsTxt} · ${hProbTxt} ${bookBadge}</div>
+          <div class=\"chip ${clsA} ${isModelAway?'model-pick':''}\">Away ${aOddsTxt} · ${aProbTxt} ${bookBadge} ${evABadge} ${isModelAway?modelBadge:''}</div>
+          <div class=\"chip ${clsH} ${isModelHome?'model-pick':''}\">Home ${hOddsTxt} · ${hProbTxt} ${bookBadge} ${evHBadge} ${isModelHome?modelBadge:''}</div>
         </div>`;
     }
 

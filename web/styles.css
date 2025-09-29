@@ -81,3 +81,7 @@ header .last-updated { margin-left: auto; color: #9fb0ff; font-size: 12px; opaci
 	.team .name { font-size: 18px; }
 	.team-logo { height: 32px; }
 }
+
+/* Footer */
+footer { background: transparent; border-top: 1px solid #25316a; margin-top: 8px; }
+.footer-meta { padding: 8px 16px; color: #9fb0ff; font-size: 12px; opacity: 0.9; }

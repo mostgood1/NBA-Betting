@@ -47,6 +47,7 @@ except Exception:
     pass
 
 WEB_DIR = BASE_DIR / "web"
+CRON_META_PATH = BASE_DIR / "data" / "processed" / ".cron_meta.json"
 
 # Serve the static frontend under /web, and serve the cards at '/'
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="/web")
@@ -498,6 +499,74 @@ def api_status():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+def _cron_meta_update(kind: str, payload: Dict[str, Any]) -> None:
+    try:
+        CRON_META_PATH.parent.mkdir(parents=True, exist_ok=True)
+        base = {}
+        if CRON_META_PATH.exists():
+            try:
+                import json as _json
+                base = _json.loads(CRON_META_PATH.read_text(encoding="utf-8", errors="ignore"))
+                if not isinstance(base, dict):
+                    base = {}
+            except Exception:
+                base = {}
+        now_iso = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        entry = dict(payload)
+        entry["timestamp"] = now_iso
+        base[f"last_{kind}"] = entry
+        try:
+            import json as _json
+            CRON_META_PATH.write_text(_json.dumps(base, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+@app.route("/api/cron/meta")
+def api_cron_meta():
+    """Return lightweight information about last cron runs (best-effort).
+
+    Includes last_refresh_bovada if recorded, and the latest odds file mtime as fallback.
+    """
+    try:
+        out: Dict[str, Any] = {}
+        # Load recorded meta if present
+        if CRON_META_PATH.exists():
+            try:
+                import json as _json
+                meta = _json.loads(CRON_META_PATH.read_text(encoding="utf-8", errors="ignore"))
+                if isinstance(meta, dict):
+                    out.update(meta)
+            except Exception:
+                pass
+        # Fallback: scan for the newest odds CSV mtime
+        try:
+            dproc = BASE_DIR / "data" / "processed"
+            newest_ts = None
+            newest_file = None
+            if dproc.exists():
+                for p in dproc.glob("*.csv"):
+                    if not any(s in p.name for s in ("odds_", "game_odds_", "market_", "closing_lines_")):
+                        continue
+                    st = p.stat().st_mtime
+                    if newest_ts is None or st > newest_ts:
+                        newest_ts = st
+                        newest_file = p
+            if newest_ts is not None:
+                out.setdefault("fallback_odds_latest", {})
+                out["fallback_odds_latest"] = {
+                    "path": str(newest_file),
+                    "mtime": datetime.utcfromtimestamp(newest_ts).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+        except Exception:
+            pass
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/last-updated")
 def api_last_updated():
     d = _parse_date_param(request)
@@ -869,6 +938,15 @@ def api_cron_refresh_bovada():
         if df is not None and not df.empty:
             out.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(out, index=False)
+        # Record cron meta best-effort
+        try:
+            _cron_meta_update("refresh_bovada", {
+                "date": d,
+                "rows": int(rows),
+                "output": str(out),
+            })
+        except Exception:
+            pass
         # Optional push
         pushed = None; push_detail = None
         if str(request.args.get("push", "0")).lower() in {"1","true","yes"}:
