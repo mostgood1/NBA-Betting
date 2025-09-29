@@ -87,6 +87,36 @@ def _extract_markets(ev: dict) -> dict:
     return out
 
 
+def _to_dt_utc(val) -> pd.Timestamp | None:
+    try:
+        # Bovada often uses epoch millis; handle both ms and ISO strings
+        if isinstance(val, (int, float)) or (isinstance(val, str) and val.isdigit()):
+            return pd.to_datetime(int(val), unit="ms", utc=True)
+        return pd.to_datetime(val, utc=True)
+    except Exception:
+        return None
+
+
+def _walk_event_lists(payload: Any):
+    """Yield lists of events found anywhere under the payload.
+
+    Bovada responses can be arrays of category dicts; each may contain an 'events' array directly
+    or nested under additional arrays. This walker finds any dict with an 'events' key.
+    """
+    try:
+        if isinstance(payload, dict):
+            if isinstance(payload.get("events"), list):
+                yield payload.get("events")
+            # Recurse into values
+            for v in payload.values():
+                yield from _walk_event_lists(v)
+        elif isinstance(payload, list):
+            for item in payload:
+                yield from _walk_event_lists(item)
+    except Exception:
+        return
+
+
 def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataFrame:
     """Fetch current game odds from Bovada for events on the given calendar date (UTC date match).
 
@@ -105,51 +135,50 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
             if verbose:
                 print(f"[bovada] {url} failed: {e}")
             continue
-    # payloads are lists of category arrays; each entry may contain "events"
+    # Traverse payloads to locate events lists regardless of depth
     for p in payloads:
         try:
-            cats = p if isinstance(p, list) else []
-            for cat in cats:
-                for sport in cat or []:
-                    events = sport.get("events", []) if isinstance(sport, dict) else []
-                    for ev in events:
-                        try:
-                            ct = pd.to_datetime(ev.get("startTime")).date() if ev.get("startTime") else None
-                        except Exception:
-                            ct = None
-                        if ct != target:
-                            continue
-                        comps = ev.get("competitors", []) or []
-                        home_name = None; away_name = None
-                        for c in comps:
-                            nm = c.get("name") or c.get("team") or c.get("abbreviation")
-                            if c.get("home") is True:
-                                home_name = nm
-                            else:
-                                # Bovada marks non-home as away (there should be 2 comps)
-                                away_name = nm if away_name is None else away_name
-                        if not home_name or not away_name:
-                            # fallback from titles
-                            title = ev.get("description") or ev.get("name") or ""
-                            if " @ " in title:
-                                a, h = title.split(" @ ", 1)
-                                away_name = away_name or a
-                                home_name = home_name or h
-                        home = normalize_team(str(home_name or "").strip())
-                        away = normalize_team(str(away_name or "").strip())
-                        mk = _extract_markets(ev)
-                        rows.append({
-                            "date": str(target),
-                            "commence_time": ev.get("startTime"),
-                            "home_team": home,
-                            "visitor_team": away,
-                            "home_ml": mk.get("home_ml"),
-                            "away_ml": mk.get("away_ml"),
-                            "home_spread": mk.get("home_spread"),
-                            "away_spread": mk.get("away_spread"),
-                            "total": mk.get("total"),
-                            "bookmaker": "bovada",
-                        })
+            for events in _walk_event_lists(p):
+                for ev in (events or []):
+                    try:
+                        dt = _to_dt_utc(ev.get("startTime"))
+                        ct = dt.date() if dt is not None else None
+                    except Exception:
+                        ct = None
+                    if ct != target:
+                        continue
+                    comps = ev.get("competitors", []) or []
+                    home_name = None; away_name = None
+                    for c in comps:
+                        nm = c.get("name") or c.get("team") or c.get("abbreviation")
+                        # Bovada sometimes uses "home": True or a "position": "H"/"A"
+                        is_home = bool(c.get("home") is True or str(c.get("position")).upper() == "H")
+                        if is_home:
+                            home_name = nm
+                        else:
+                            away_name = away_name or nm
+                    if not home_name or not away_name:
+                        # fallback from titles
+                        title = ev.get("description") or ev.get("name") or ""
+                        if " @ " in title:
+                            a, h = title.split(" @ ", 1)
+                            away_name = away_name or a
+                            home_name = home_name or h
+                    home = normalize_team(str(home_name or "").strip())
+                    away = normalize_team(str(away_name or "").strip())
+                    mk = _extract_markets(ev)
+                    rows.append({
+                        "date": str(target),
+                        "commence_time": dt.isoformat() if dt is not None else ev.get("startTime"),
+                        "home_team": home,
+                        "visitor_team": away,
+                        "home_ml": mk.get("home_ml"),
+                        "away_ml": mk.get("away_ml"),
+                        "home_spread": mk.get("home_spread"),
+                        "away_spread": mk.get("away_spread"),
+                        "total": mk.get("total"),
+                        "bookmaker": "bovada",
+                    })
         except Exception:
             continue
     return pd.DataFrame(rows)
