@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NBA Odds Coverage</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+  async function fetchCoverage(){
+    const d = document.getElementById('datePicker').value;
+    const res = await fetch(`/api/odds-coverage?date=${d}`);
+    const js = await res.json();
+    const tbody = document.querySelector('#tbl tbody');
+    tbody.innerHTML = '';
+    for (const r of (js.rows||[])){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.home_team||''}</td><td>${r.visitor_team||''}</td><td>${r.have_ml?'✓':'✗'}</td><td>${r.have_spread?'✓':'✗'}</td><td>${r.have_total?'✓':'✗'}</td>`;
+      tbody.appendChild(tr);
+    }
+    document.getElementById('summary').textContent = `Date ${js.date||d} — ${(js.rows||[]).length} games`;
+  }
+  window.addEventListener('DOMContentLoaded', ()=>{
+    const today = new Date().toISOString().slice(0,10);
+    const inp = document.getElementById('datePicker'); inp.value = today; inp.addEventListener('change', fetchCoverage);
+    fetchCoverage();
+  });
+  </script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1>Odds Coverage</h1>
+      <nav class="site-nav">
+        <a href="/web/index.html">Games</a>
+        <a href="/web/recommendations.html">Recommendations</a>
+        <a href="/web/props.html">Props</a>
+        <a href="/web/reconciliation.html">Reconciliation</a>
+        <a href="/web/odds_coverage.html" aria-current="page">Odds Coverage</a>
+      </nav>
+      <div class="controls">
+        <label class="sr-only" for="datePicker">Select date</label>
+        <input id="datePicker" type="date" />
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    <section id="summary" class="summary"></section>
+    <div class="table-wrap">
+      <table id="tbl" class="data-table">
+        <thead><tr><th>Home</th><th>Away</th><th>ML</th><th>Spread</th><th>Total</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>

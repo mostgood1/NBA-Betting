@@ -6,8 +6,10 @@ src/nba_betting/config.py
 src/nba_betting/elo.py
 src/nba_betting/features.py
 src/nba_betting/odds_api.py
+src/nba_betting/odds_bovada.py
 src/nba_betting/player_logs.py
 src/nba_betting/props_actuals.py
+src/nba_betting/props_edges.py
 src/nba_betting/props_features.py
 src/nba_betting/props_train.py
 src/nba_betting/rosters.py

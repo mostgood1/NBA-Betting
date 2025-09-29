@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NBA Recommendations</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+  async function fetchRecs() {
+    const d = document.getElementById('datePicker').value;
+    const params = new URLSearchParams({ date: d, spread_edge: document.getElementById('minSpread').value, total_edge: document.getElementById('minTotal').value });
+    const res = await fetch(`/api/recommendations?${params}`);
+    const js = await res.json();
+    const tbody = document.querySelector('#tbl tbody');
+    tbody.innerHTML = '';
+    const rows = js.rows || [];
+    for (const r of rows){
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.market||''}</td><td>${r.home||''}</td><td>${r.away||''}</td><td>${r.side||''}</td><td>${r.edge!=null? Number(r.edge).toFixed(2): (r.ev!=null? (Number(r.ev)*100).toFixed(1)+'%':'')}</td>`;
+      tbody.appendChild(tr);
+    }
+    document.getElementById('summary').textContent = `Date ${js.date||d} — ${rows.length} picks`;
+  }
+  window.addEventListener('DOMContentLoaded', ()=>{
+    const today = new Date().toISOString().slice(0,10);
+    const inp = document.getElementById('datePicker'); inp.value = today; inp.addEventListener('change', fetchRecs);
+    document.getElementById('minSpread').addEventListener('change', fetchRecs);
+    document.getElementById('minTotal').addEventListener('change', fetchRecs);
+    fetchRecs();
+  });
+  </script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1>Recommendations</h1>
+      <nav class="site-nav">
+        <a href="/web/index.html">Games</a>
+        <a href="/web/recommendations.html" aria-current="page">Recommendations</a>
+        <a href="/web/props.html">Props</a>
+        <a href="/web/reconciliation.html">Reconciliation</a>
+        <a href="/web/odds_coverage.html">Odds Coverage</a>
+      </nav>
+      <div class="controls">
+        <label class="sr-only" for="datePicker">Select date</label>
+        <input id="datePicker" type="date" />
+        <label>Min ATS edge <input id="minSpread" type="number" step="0.1" value="1.0" /></label>
+        <label>Min Total edge <input id="minTotal" type="number" step="0.1" value="1.5" /></label>
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    <section id="summary" class="summary"></section>
+    <div class="table-wrap">
+      <table id="tbl" class="data-table">
+        <thead><tr><th>Market</th><th>Home</th><th>Away</th><th>Pick</th><th>Edge/EV</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NBA Reconciliation</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script>
+  async function fetchRecon(){
+    const d = document.getElementById('datePicker').value;
+    const res = await fetch(`/api/reconciliation?date=${d}`);
+    const js = await res.json();
+    const out = document.getElementById('summary');
+    const parts = [];
+    if (js.games!=null) parts.push(`Games with results: ${js.games}`);
+    if (js.margin_error_mae!=null) parts.push(`MAE ΔMargin: ${Number(js.margin_error_mae).toFixed(2)}`);
+    if (js.total_error_mae!=null) parts.push(`MAE ΔTotal: ${Number(js.total_error_mae).toFixed(2)}`);
+    if (js.margin_error_rmse!=null) parts.push(`RMSE ΔMargin: ${Number(js.margin_error_rmse).toFixed(2)}`);
+    if (js.total_error_rmse!=null) parts.push(`RMSE ΔTotal: ${Number(js.total_error_rmse).toFixed(2)}`);
+    parts.push(`Props rows: ${js.props_rows||0}`)
+    out.textContent = parts.join(' • ');
+  }
+  window.addEventListener('DOMContentLoaded', ()=>{
+    const today = new Date().toISOString().slice(0,10);
+    const inp = document.getElementById('datePicker'); inp.value = today; inp.addEventListener('change', fetchRecon);
+    fetchRecon();
+  });
+  </script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <h1>Reconciliation</h1>
+      <nav class="site-nav">
+        <a href="/web/index.html">Games</a>
+        <a href="/web/recommendations.html">Recommendations</a>
+        <a href="/web/props.html">Props</a>
+        <a href="/web/reconciliation.html" aria-current="page">Reconciliation</a>
+        <a href="/web/odds_coverage.html">Odds Coverage</a>
+      </nav>
+      <div class="controls">
+        <label class="sr-only" for="datePicker">Select date</label>
+        <input id="datePicker" type="date" />
+      </div>
+    </div>
+  </header>
+  <main class="container">
+    <section id="summary" class="summary"></section>
+  </main>
+</body>
+</html>

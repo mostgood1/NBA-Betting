@@ -10,12 +10,23 @@
   <header class="site-header">
     <div class="container">
       <h1>NBA Slate</h1>
+      <nav class="site-nav">
+        <a href="/web/index.html" aria-current="page">Games</a>
+        <a href="/web/recommendations.html">Recommendations</a>
+        <a href="/web/props.html">Props</a>
+        <a href="/web/reconciliation.html">Reconciliation</a>
+        <a href="/web/odds_coverage.html">Odds Coverage</a>
+      </nav>
       <div class="controls">
         <label for="datePicker" class="sr-only">Select date</label>
         <input type="date" id="datePicker" title="Select date" />
         <label class="toggle"><input type="checkbox" id="resultsToggle" /> Show results</label>
         <label class="toggle"><input type="checkbox" id="hideOdds" /> Hide Odds</label>
         <button id="todayBtn">Today</button>
+        <button id="refreshOddsBtn" title="Fetch Bovada odds for selected date">Refresh Odds</button>
+        <label title="Store an admin key in this browser to enable Refresh Odds"><span class="sr-only">Admin Key</span>
+          <input type="password" id="adminKey" placeholder="Admin Key" />
+        </label>
       </div>
     </div>
   </header>
@@ -29,5 +40,17 @@
     </div>
   </footer>
   <script src="app.js"></script>
+  <script>
+    // Persist admin key for refresh endpoint
+    (function(){
+      const el = document.getElementById('adminKey');
+      if (!el) return;
+      const saved = sessionStorage.getItem('ADMIN_KEY') || '';
+      if (saved) el.value = saved;
+      el.addEventListener('change', ()=>{
+        sessionStorage.setItem('ADMIN_KEY', el.value || '');
+      });
+    })();
+  </script>
 </body>
 </html>

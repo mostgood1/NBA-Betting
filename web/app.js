@@ -9,6 +9,7 @@ const state = {
   teams: {}, // tricode -> {name, primary, secondary}
   schedule: [],
   byDate: new Map(),
+  scheduleDates: [], // strictly from official schedule
   predsByKey: new Map(), // key: date|homeTricode|awayTricode
   propsEdges: [],
   reconByKey: new Map(), // key: date|homeTricode|awayTricode -> actuals/errors
@@ -24,6 +25,9 @@ const PIN_DATE = '2025-04-13';
 const TEAM_ALIASES = {
   'los angeles clippers': 'LAC',
 };
+
+// Optional: treat only official schedule dates as selectable
+const STRICT_SCHEDULE_DATES = true;
 
 function fmtTimeEST(iso) {
   if (!iso) return '';
@@ -78,18 +82,34 @@ async function loadTeams() {
 }
 
 async function loadSchedule() {
-  const res = await fetch('../data/processed/schedule_2025_26.json');
-  const sched = await res.json();
-  state.schedule = sched;
+  // Try dynamic API (auto-builds if missing), then fallback to static file
+  let sched = [];
+  try {
+    const r = await fetch('/api/schedule');
+    if (r.ok) {
+      sched = await r.json();
+    }
+  } catch(e) { /* ignore */ }
+  if (!Array.isArray(sched) || sched.length === 0) {
+    const res = await fetch('../data/processed/schedule_2025_26.json');
+    sched = await res.json();
+  }
+  // Filter out non-NBA exhibition teams that won't have logos/mappings
+  const isKnown = (tri)=> !!state.teams[String(tri||'').toUpperCase()];
+  const filtered = Array.isArray(sched) ? sched.filter(g => isKnown(g.home_tricode) && isKnown(g.away_tricode)) : [];
+  state.schedule = filtered;
   const m = new Map();
-  for (const g of sched) {
+  const schedDateSet = new Set();
+  for (const g of filtered) {
     let dt = g.date_utc || (g.datetime_utc ? g.datetime_utc.slice(0,10) : null);
     if (typeof dt === 'string' && dt.includes('T')) dt = dt.slice(0,10);
     if (!dt) continue;
+    schedDateSet.add(dt);
     if (!m.has(dt)) m.set(dt, []);
     m.get(dt).push(g);
   }
   state.byDate = m;
+  state.scheduleDates = Array.from(schedDateSet).sort();
 }
 
 // If the pinned date isn't present in the schedule, synthesize a slate from predictions_{date}.csv
@@ -259,6 +279,11 @@ async function maybeLoadOdds(dateStr){
   const hmlCol = pick(['home_ml','close_home_ml','ml_home']);
   const amlCol = pick(['away_ml','close_away_ml','ml_away']);
   const bookCol = pick(['bookmaker','source','consensus_source']);
+  // Price columns to improve EV calc if present
+  const hSprPriceCol = pick(['home_spread_price','spread_home_price','home_spread_odds','home_spread_ml']);
+  const aSprPriceCol = pick(['away_spread_price','spread_away_price','away_spread_odds','away_spread_ml']);
+  const totOverPriceCol = pick(['total_over_price','ou_over_price','total_over_ml','close_total_over_ml']);
+  const totUnderPriceCol = pick(['total_under_price','ou_under_price','total_under_ml','close_total_under_ml']);
   for (let i=1;i<rows.length;i++){
     const r = rows[i];
     const d = dateCol ? r[idx[dateCol]].slice(0,10) : dateStr;
@@ -283,6 +308,10 @@ async function maybeLoadOdds(dateStr){
       away_spread,
       total: totCol ? Number(r[idx[totCol]]) : null,
       bookmaker: bookCol ? r[idx[bookCol]] : null,
+      home_spread_price: hSprPriceCol ? Number(r[idx[hSprPriceCol]]) : null,
+      away_spread_price: aSprPriceCol ? Number(r[idx[aSprPriceCol]]) : null,
+      total_over_price: totOverPriceCol ? Number(r[idx[totOverPriceCol]]) : null,
+      total_under_price: totUnderPriceCol ? Number(r[idx[totUnderPriceCol]]) : null,
     });
   }
 }
@@ -442,8 +471,19 @@ function renderDate(dateStr){
   }
   for (const g of list){
   const time = g.datetime_est || g.datetime_utc || g.date_est || g.date_utc;
-  const timeStr = typeof time === 'string' ? time.split('T')[1]?.slice(0,5) || '' : fmtTimeEST(time);
-  const venueLine = `Venue: ${g.home_tricode && state.teams[g.home_tricode]?.name ? state.teams[g.home_tricode].name : (g.arena_name || 'Home')} • ${dateStr} America/New_York`;
+  let timeStr = '';
+  if (typeof time === 'string'){
+    const tpart = time.includes('T') ? time.split('T')[1] : '';
+    timeStr = tpart ? tpart.slice(0,5) : '';
+  } else {
+    timeStr = fmtTimeEST(time);
+  }
+  const locBits = [];
+  if (g.arena_name) locBits.push(g.arena_name);
+  if (g.arena_city) locBits.push(g.arena_city);
+  if (g.arena_state) locBits.push(g.arena_state);
+  const venueText = locBits.length ? locBits.join(', ') : (g.home_tricode && state.teams[g.home_tricode]?.name ? state.teams[g.home_tricode].name : 'Home');
+  const venueLine = `Venue: ${venueText}${g.broadcasters_national?` • TV: ${g.broadcasters_national}`:''} • ${dateStr} ET`;
     const away = g.away_tricode; const home = g.home_tricode;
     const key = `${dateStr}|${home}|${away}`; // note schedule is away@home
     const pred = state.predsByKey.get(key);
@@ -618,7 +658,14 @@ function renderDate(dateStr){
     const node = document.createElement('div');
     node.className = 'game-card';
     // Build detailed card body aligned to NFL example
-    const statusLine = showResults ? 'FINAL' : (timeStr ? `Scheduled ${timeStr} ET` : 'Scheduled');
+    let statusLine = 'Scheduled';
+    if (showResults && (actualHome!=null && actualAway!=null)) {
+      statusLine = 'FINAL';
+    } else if (g.game_status_text) {
+      statusLine = String(g.game_status_text);
+    } else if (timeStr) {
+      statusLine = `Scheduled ${timeStr} ET`;
+    }
     const awayName = state.teams[away]?.name || away;
     const homeName = state.teams[home]?.name || home;
     // Spread and ATS/Totals result if results shown
@@ -694,13 +741,36 @@ function renderDate(dateStr){
 function setupControls(){
   const picker = document.getElementById('datePicker');
   const todayBtn = document.getElementById('todayBtn');
+  const refreshBtn = document.getElementById('refreshOddsBtn');
   const dates = Array.from(state.byDate.keys()).sort();
+  const sched = Array.isArray(state.scheduleDates) ? state.scheduleDates : dates;
   const today = new Date().toISOString().slice(0,10);
   picker.min = dates[0]; picker.max = dates[dates.length-1];
-  const defaultDate = dates.includes(PIN_DATE) ? PIN_DATE : (dates.includes(today) ? today : dates[0]);
+  // Default to the nearest scheduled date to 'today'
+  const nearestScheduled = (target)=>{
+    const arr = sched;
+    if (!arr || arr.length === 0) return null;
+    if (arr.includes(target)) return target;
+    const t = new Date(target);
+    let best = arr[0];
+    let bestDiff = Math.abs(new Date(arr[0]) - t);
+    for (let i=1;i<arr.length;i++){
+      const diff = Math.abs(new Date(arr[i]) - t);
+      if (diff < bestDiff){ bestDiff = diff; best = arr[i]; }
+    }
+    return best;
+  };
+  const defaultDate = nearestScheduled(today) || (dates.includes(PIN_DATE) ? PIN_DATE : dates[0]);
   picker.value = defaultDate;
   const go = async ()=>{
-    const d = picker.value;
+    let d = picker.value;
+    const hasGames = (state.byDate.get(d) || []).length > 0;
+    if (STRICT_SCHEDULE_DATES || !hasGames) {
+      const near = nearestScheduled(d);
+      if (near && near !== d) {
+        d = near; picker.value = near;
+      }
+    }
     await maybeLoadPredictions(d);
     await maybeLoadOdds(d);
     await maybeLoadPropsEdges(d);
@@ -710,7 +780,40 @@ function setupControls(){
   picker.addEventListener('change', go);
   const resToggle = document.getElementById('resultsToggle');
   if (resToggle) resToggle.addEventListener('change', go);
-  todayBtn.addEventListener('click', ()=>{ picker.value = dates.includes(today)?today:dates[0]; picker.dispatchEvent(new Event('change')); });
+  if (refreshBtn) refreshBtn.addEventListener('click', async ()=>{
+    const d = picker.value;
+    try{
+      const url = new URL('/api/cron/refresh-bovada', window.location.origin);
+      url.searchParams.set('date', d);
+      // If an admin key is configured, the server requires it; allow via prompt or skip
+      const key = sessionStorage.getItem('ADMIN_KEY') || '';
+      const headers = key ? {'X-Admin-Key': key} : {};
+      const resp = await fetch(url.toString(), { method: 'POST', headers });
+      if (!resp.ok){ console.warn('Refresh failed', await resp.text()); }
+    }catch(e){ console.warn('Refresh error', e); }
+    // Re-load odds and re-render
+    await maybeLoadOdds(d);
+    renderDate(d);
+  });
+  todayBtn.addEventListener('click', ()=>{
+    if (sched.includes(today)) {
+      picker.value = today;
+    } else {
+      const near = (function(){
+        const t = new Date(today);
+        const arr = sched;
+        if (!arr || arr.length === 0) return dates[0];
+        let best = arr[0]; let bestDiff = Math.abs(new Date(arr[0]) - t);
+        for (let i=1;i<arr.length;i++){
+          const diff = Math.abs(new Date(arr[i]) - t);
+          if (diff < bestDiff){ bestDiff = diff; best = arr[i]; }
+        }
+        return best;
+      })();
+      picker.value = near;
+    }
+    picker.dispatchEvent(new Event('change'));
+  });
   go();
 }
 

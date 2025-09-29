@@ -78,6 +78,30 @@ python -m nba_betting.cli attach-closing-lines
 
 This produces `data/processed/closing_lines.parquet` and merges it into your features as `features_with_market.parquet`.
 
+### Daily game odds with automatic fallback
+
+The `predict-date` command now automatically attaches odds for the slate date:
+
+- It first tries current OddsAPI lines if `ODDS_API_KEY` is set (via env or `.env`).
+- If unavailable or empty, it falls back to scraping Bovada for that date.
+- A standardized CSV is written to `data/processed/game_odds_YYYY-MM-DD.csv` and merged into `predictions_YYYY-MM-DD.csv` with implied probabilities and model edges (winner, spread, total).
+
+Example (PowerShell):
+
+```powershell
+# Optional for OddsAPI (will fall back to Bovada if not set)
+$env:ODDS_API_KEY = "<your_key>"
+
+# Generate predictions and odds for a given date
+python -m nba_betting.cli predict-date --date 2025-04-13
+
+# Outputs:
+# - predictions_2025-04-13.csv (repo root)
+# - data/processed/game_odds_2025-04-13.csv
+```
+
+The frontend `web/app.js` will look for `data/processed/game_odds_YYYY-MM-DD.csv` (among other candidates) and render ML/spread/total plus EV lines on each game card.
+
 ### Player props odds (experimental)
 
 ```powershell

@@ -98,6 +98,30 @@ python -m nba_betting.cli attach-closing-lines
 
 This produces `data/processed/closing_lines.parquet` and merges it into your features as `features_with_market.parquet`.
 
+### Daily game odds with automatic fallback
+
+The `predict-date` command now automatically attaches odds for the slate date:
+
+- It first tries current OddsAPI lines if `ODDS_API_KEY` is set (via env or `.env`).
+- If unavailable or empty, it falls back to scraping Bovada for that date.
+- A standardized CSV is written to `data/processed/game_odds_YYYY-MM-DD.csv` and merged into `predictions_YYYY-MM-DD.csv` with implied probabilities and model edges (winner, spread, total).
+
+Example (PowerShell):
+
+```powershell
+# Optional for OddsAPI (will fall back to Bovada if not set)
+$env:ODDS_API_KEY = "<your_key>"
+
+# Generate predictions and odds for a given date
+python -m nba_betting.cli predict-date --date 2025-04-13
+
+# Outputs:
+# - predictions_2025-04-13.csv (repo root)
+# - data/processed/game_odds_2025-04-13.csv
+```
+
+The frontend `web/app.js` will look for `data/processed/game_odds_YYYY-MM-DD.csv` (among other candidates) and render ML/spread/total plus EV lines on each game card.
+
 ### Player props odds (experimental)
 
 ```powershell
@@ -137,7 +161,120 @@ python -m nba_betting.cli fetch-prop-actuals --start 2024-10-01 --end 2025-06-30
 Output is upserted to `data/processed/props_actuals.csv` and `.parquet` with columns:
 - date, game_id, team, player_id, player_name, pts, reb, ast, threes, pra
 
+### Build, train, predict, evaluate props
+
+```powershell
+# Build features and train Ridge models for props
+python -m nba_betting.cli build-props-features
+python -m nba_betting.cli train-props
+
+# Predict for a given slate date (filters to scoreboard teams by default)
+python -m nba_betting.cli predict-props --date 2025-01-15
+
+# Evaluate model vs actuals over a range (falls back to player_logs if nbastatR not available)
+python -m nba_betting.cli evaluate-props --start 2025-01-15 --end 2025-01-15
+```
+
+### Compute props edges (EV)
+
+Merge your predictions with OddsAPI player props to compute model probabilities, edge, and EV:
+
+```powershell
+# If you have saved props odds for that date in data/raw, use them; otherwise set ODDS_API_KEY and it will fetch
+$env:ODDS_API_KEY = "<your_key>"
+python -m nba_betting.cli props-edges --date 2025-01-15 --use-saved --mode auto
+```
+
+Outputs `data/processed/props_edges_YYYY-MM-DD.csv` with columns:
+- date, player_name, stat, side, line, price, implied_prob, model_prob, edge, ev, bookmaker
+
+### No historical props? Current-day only workflow
+
+If you can’t access historical player props lines, you can still use the pipeline daily:
+
+1) Ensure player logs are refreshed periodically and models are trained.
+2) On game days, about 1–3 hours before tip, run:
+
+```powershell
+$env:ODDS_API_KEY = "<your_key>"
+python -m nba_betting.cli predict-props --date 2025-10-24
+python -m nba_betting.cli props-edges --date 2025-10-24 --no-use-saved --mode current --min-edge 0.03 --min-ev 0 --top 100
+```
+
+3) Optionally filter to a specific set of books:
+
+```powershell
+python -m nba_betting.cli props-edges --date 2025-10-24 --mode current --bookmakers draftkings,fanduel,pinnacle
+```
+
+This produces an edges CSV you can sort by EV or edge for actionable picks without any historical props archive.
+
 ## Troubleshooting
 
 - Rscript not found: install R, add `Rscript.exe` to PATH, or set `RSCRIPT_PATH` to the full path.
 - OddsAPI 422 for player props: the API may not have props at your snapshot timestamp; re-run with `--mode current` near tip-off or try a different date.
+
+## Frontend & Render Deployment (mirrors NFL-Betting)
+
+This repo now deploys exactly like `mostgood1/NFL-Betting`: a minimal Flask app serves the static frontend under `web/` and redirects `/` → `/web/index.html`. Gunicorn runs the Flask app on Render.
+
+What’s included for deploy:
+- `app.py` – Flask server that serves `web/` assets and a `/health` endpoint.
+- `Procfile` – Gunicorn process type.
+- `start.sh` – Start script used on Render (threads, timeouts akin to NFL-Betting).
+- `render.yaml` – Blueprint for a Python Web Service (env: python).
+
+Run locally (Windows PowerShell):
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python app.py  # http://localhost:5050
+```
+
+Deploy on Render (Blueprint):
+1) Push to GitHub (done if you’re viewing this there).
+2) In Render: New → Blueprint → paste repo URL. It will detect `render.yaml` and create a Python Web Service.
+3) Build Command: `pip install -r requirements.txt` (from render.yaml)
+4) Start Command: `bash start.sh` (from render.yaml)
+
+Environment variables (optional but consistent with NFL app):
+- `FLASK_ENV=production`
+- `PYTHONUNBUFFERED=1`
+
+Routing:
+- `/` redirects to `/web/index.html`
+- Static assets are served under `/web/*` (e.g., `/web/assets/logos/BOS.svg`).
+
+Notes:
+- The UI is static; all data files it reads (CSV/JSON) are bundled in the repo and served statically.
+- To update slate data/odds snapshots, commit updated files and push; Render will redeploy automatically.
+
+## Admin endpoints (optional)
+
+For parity with NFL-Betting, the Flask server exposes lightweight admin endpoints:
+
+- Start a daily update job:
+	- GET/POST `/api/admin/daily-update?push=1` (push optional)
+- Check job status and logs:
+	- GET `/api/admin/daily-update/status?tail=200`
+
+Auth:
+- If `ADMIN_KEY` is set in environment, include it via query `?key=...` or header `X-Admin-Key: ...`.
+- If no key is set, only local/lan clients are allowed (127.0.0.1 or private ranges like 192.168.x.x) for convenience.
+
+What the job does:
+- It’s a placeholder that can run CLI tasks (e.g., predictions or exports) and append logs under `logs/`.
+- Git push is attempted if `push=1` and Git is configured with write access.
+
+Examples (PowerShell):
+
+```powershell
+# Start job
+$resp = Invoke-RestMethod http://localhost:5050/api/admin/daily-update
+$resp
+
+# Poll status
+Invoke-RestMethod http://localhost:5050/api/admin/daily-update/status?tail=100 | Format-List
+```

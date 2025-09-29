@@ -14,8 +14,12 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); f
 .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
 .site-header, .site-footer { background: #0c0f14; border-bottom: 1px solid #222a38; }
 .site-header h1 { margin: 0; font-size: 20px; }
+.site-nav { display: inline-flex; gap: 10px; margin-left: 16px; }
+.site-nav a { color: var(--muted); text-decoration: none; font-size: 13px; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; }
+.site-nav a[aria-current="page"], .site-nav a:hover { color: var(--text); border-color: #2a3140; background: var(--card); }
 .controls { display: flex; gap: 8px; align-items: center; }
 .controls input, .controls button { background: var(--card); border: 1px solid #2a3140; color: var(--text); padding: 8px 10px; border-radius: 8px; }
+.controls #adminKey { width: 120px; }
 
 .summary { margin: 16px 0 8px; color: var(--muted); font-size: 14px; }
 .games-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; align-items: start; justify-items: center; }
@@ -50,6 +54,12 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); f
 .win { color: var(--bad-green); }
 .warn { color: var(--accent); }
 .loss { color: var(--bad-red); }
+
+.table-wrap { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td { padding: 8px 10px; border-bottom: 1px solid #232a39; font-size: 13px; }
+.data-table thead th { position: sticky; top: 0; background: #10141c; z-index: 1; }
+.data-table tr:hover td { background: rgba(255,255,255,0.02); }
 
 @media (max-width: 800px) {
   .games-grid { grid-template-columns: 1fr; }

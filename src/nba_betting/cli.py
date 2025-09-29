@@ -19,6 +19,7 @@ from .teams import normalize_team
 from .scrape_nba_api import fetch_games_nba_api, enrich_periods_existing, backfill_scoreboard
 from .odds_api import backfill_historical_odds, OddsApiConfig, consensus_lines_at_close, backfill_player_props, fetch_player_props_current
 from .odds_api import fetch_game_odds_current
+from .odds_bovada import fetch_bovada_odds_current
 from .props_actuals import fetch_prop_actuals_via_nbastatr, upsert_props_actuals
 from .props_features import build_props_features, build_features_for_date
 from .props_train import train_props_models, predict_props
@@ -845,6 +846,40 @@ def predict_date_cmd(date_str: str | None, merge_odds_csv: str | None, out_path:
         return part if not part.empty else None
 
     slate = None
+    # Fallback: build slate from processed schedule JSON (preseason/regular) when API/history fail
+    def _build_slate_from_schedule(date_str_local: str) -> pd.DataFrame | None:
+        try:
+            sched_path = paths.data_processed / "schedule_2025_26.json"
+            if not sched_path.exists():
+                return None
+            sdf = pd.read_json(sched_path)
+            # Normalize date to YYYY-MM-DD
+            if "date_utc" in sdf.columns:
+                sdf["date_utc"] = pd.to_datetime(sdf["date_utc"], errors="coerce").dt.date
+            target_d = pd.to_datetime(date_str_local).date()
+            day = sdf[sdf["date_utc"] == target_d].copy()
+            if day.empty:
+                return None
+            # Build full team names from City + Name to feed normalize_team
+            def full_name(city, name):
+                city_s = str(city or "").strip()
+                name_s = str(name or "").strip()
+                return f"{city_s} {name_s}".strip()
+            rows = []
+            for _, g in day.iterrows():
+                home_full = full_name(g.get("home_city"), g.get("home_name"))
+                away_full = full_name(g.get("away_city"), g.get("away_name"))
+                home = normalize_team(home_full)
+                away = normalize_team(away_full)
+                rows.append({
+                    "date": target_d,
+                    "home_team": home,
+                    "visitor_team": away,
+                })
+            df = pd.DataFrame(rows)
+            return df if not df.empty else None
+        except Exception:
+            return None
     try:
         # Fetch slate from ScoreboardV2
         sb = scoreboardv2.ScoreboardV2(game_date=date_str, day_offset=0, timeout=30)
@@ -891,63 +926,120 @@ def predict_date_cmd(date_str: str | None, merge_odds_csv: str | None, out_path:
         else:
             slate = None
     except Exception as e:
-        console.print(f"Scoreboard fetch failed ({e}); falling back to history for {date_str}.", style="yellow")
+        console.print(f"Scoreboard fetch failed ({e}); trying fallbacks for {date_str}.", style="yellow")
         slate = _build_slate_from_history(date_str)
+        if slate is None or slate.empty:
+            slate = _build_slate_from_schedule(date_str)
 
     if slate is None or slate.empty:
-        console.print(f"No games found on {date_str} (API down and no history fallback).", style="yellow"); return
+        console.print(f"No games found on {date_str} (API down and no history/schedule fallback).", style="yellow"); return
 
     # Predict
     res = _predict_from_matchups(slate)
 
-    # Optional odds merge
+    # Auto-odds: If a CSV path was provided, merge it; otherwise try OddsAPI then Bovada, save standardized game_odds_{date}.csv, and merge
+    def _merge_odds_df(odds_df: pd.DataFrame):
+        nonlocal res
+        if odds_df is None or odds_df.empty:
+            return
+        o = odds_df.copy()
+        if 'date' in o.columns:
+            try:
+                o['date'] = pd.to_datetime(o['date']).dt.date
+            except Exception:
+                pass
+        # Normalize names
+        if 'home_team' in o.columns:
+            o['home_team'] = o['home_team'].apply(normalize_team)
+        if 'visitor_team' in o.columns:
+            o['visitor_team'] = o['visitor_team'].apply(normalize_team)
+        res = res.merge(o, on=['date','home_team','visitor_team'], how='left', suffixes=('', '_odds'))
+        # Compute implied probs and edges
+        def implied_prob_american(odds):
+            try:
+                o = float(odds)
+            except Exception:
+                return pd.NA
+            if pd.isna(o):
+                return pd.NA
+            if o < 0:
+                return (-o) / ((-o) + 100.0)
+            return 100.0 / (o + 100.0)
+        if 'home_ml' in res.columns:
+            res['home_implied_prob'] = res['home_ml'].apply(implied_prob_american)
+            res['edge_win'] = res['home_win_prob'] - res['home_implied_prob']
+        if 'home_spread' in res.columns:
+            res['market_home_margin'] = -res['home_spread']
+            res['edge_spread'] = res['pred_margin'] - res['market_home_margin']
+        if 'total' in res.columns:
+            res['edge_total'] = res['pred_total'] - res['total']
+        # Period edges if columns present
+        for half in ("h1","h2"):
+            sp_col = f"{half}_spread"; tot_col = f"{half}_total"
+            if sp_col in res.columns and f"{half}_pred_margin" in res.columns:
+                res[f"edge_{half}_spread"] = res[f"{half}_pred_margin"] - (-res[sp_col])
+            if tot_col in res.columns and f"{half}_pred_total" in res.columns:
+                res[f"edge_{half}_total"] = res[f"{half}_pred_total"] - res[tot_col]
+        for q in ("q1","q2","q3","q4"):
+            sp_col = f"{q}_spread"; tot_col = f"{q}_total"
+            if sp_col in res.columns and f"{q}_pred_margin" in res.columns:
+                res[f"edge_{q}_spread"] = res[f"{q}_pred_margin"] - (-res[sp_col])
+            if tot_col in res.columns and f"{q}_pred_total" in res.columns:
+                res[f"edge_{q}_total"] = res[f"{q}_pred_total"] - res[tot_col]
+
+    # 1) If merge-odds CSV provided, use it
     if merge_odds_csv:
         try:
-            odds = pd.read_csv(merge_odds_csv)
-            # Normalize and filter to date
-            if 'date' in odds.columns:
-                odds['date'] = pd.to_datetime(odds['date']).dt.date
-            odds['home_team'] = odds['home_team'].apply(normalize_team)
-            odds['visitor_team'] = odds['visitor_team'].apply(normalize_team)
-            res = res.merge(odds, on=['date','home_team','visitor_team'], how='left', suffixes=('', '_odds'))
-            # Compute implied probs and edges if moneyline provided
-            def implied_prob_american(odds):
-                try:
-                    o = float(odds)
-                except Exception:
-                    return pd.NA
-                if o < 0:
-                    return (-o) / ((-o) + 100.0)
-                return 100.0 / (o + 100.0)
-            if 'home_ml' in res.columns:
-                res['home_implied_prob'] = res['home_ml'].apply(implied_prob_american)
-                res['edge_win'] = res['home_win_prob'] - res['home_implied_prob']
-            # Spread edge if home_spread present (market home spread, negative means favorite)
-            if 'home_spread' in res.columns:
-                # Market expected home margin = -home_spread (e.g., -5.5 -> +5.5)
-                res['market_home_margin'] = -res['home_spread']
-                res['edge_spread'] = res['pred_margin'] - res['market_home_margin']
-            # Total edge if total present
-            if 'total' in res.columns:
-                res['edge_total'] = res['pred_total'] - res['total']
-
-            # Period derivatives: if provided in odds, compute edges using period predictions
-            # Halves
-            for half in ("h1","h2"):
-                sp_col = f"{half}_spread"; tot_col = f"{half}_total"
-                if sp_col in res.columns and f"{half}_pred_margin" in res.columns:
-                    res[f"edge_{half}_spread"] = res[f"{half}_pred_margin"] - (-res[sp_col])  # market home margin is -home_spread
-                if tot_col in res.columns and f"{half}_pred_total" in res.columns:
-                    res[f"edge_{half}_total"] = res[f"{half}_pred_total"] - res[tot_col]
-            # Quarters
-            for q in ("q1","q2","q3","q4"):
-                sp_col = f"{q}_spread"; tot_col = f"{q}_total"
-                if sp_col in res.columns and f"{q}_pred_margin" in res.columns:
-                    res[f"edge_{q}_spread"] = res[f"{q}_pred_margin"] - (-res[sp_col])
-                if tot_col in res.columns and f"{q}_pred_total" in res.columns:
-                    res[f"edge_{q}_total"] = res[f"{q}_pred_total"] - res[tot_col]
+            odds_csv_df = pd.read_csv(merge_odds_csv)
+            _merge_odds_df(odds_csv_df)
         except Exception as e:
-            console.print(f"Failed to merge odds: {e}", style="yellow")
+            console.print(f"Failed to merge odds from CSV: {e}", style="yellow")
+    else:
+        # 2) Try OddsAPI current; if empty or no key, fall back to Bovada
+        import datetime as _dt
+        target_date = _dt.datetime.strptime(date_str, "%Y-%m-%d").date()
+        game_odds_out = paths.data_processed / f"game_odds_{date_str}.csv"
+        odds_out_df = pd.DataFrame()
+        # Try OddsAPI first
+        api_key = os.environ.get("ODDS_API_KEY") or _load_dotenv_key("ODDS_API_KEY")
+        if api_key:
+            try:
+                cfg = OddsApiConfig(api_key=api_key)
+                long_df = fetch_game_odds_current(cfg, pd.to_datetime(target_date))
+                if long_df is not None and not long_df.empty:
+                    wide = consensus_lines_at_close(long_df)
+                    if wide is not None and not wide.empty:
+                        # Map to standardized per-game odds row
+                        tmp = wide.copy()
+                        tmp["date"] = pd.to_datetime(tmp["commence_time"]).dt.date
+                        tmp.rename(columns={"away_team": "visitor_team"}, inplace=True)
+                        tmp["home_spread"] = tmp.get("spread_point")
+                        tmp["away_spread"] = tmp["home_spread"].apply(lambda x: -x if pd.notna(x) else pd.NA)
+                        tmp["total"] = tmp.get("total_point")
+                        cols = [
+                            "date","commence_time","home_team","visitor_team",
+                            "home_ml","away_ml","home_spread","away_spread","total"
+                        ]
+                        keep = [c for c in cols if c in tmp.columns]
+                        odds_out_df = tmp[keep].copy()
+                        odds_out_df["bookmaker"] = "oddsapi_consensus"
+            except Exception as e:
+                console.print(f"OddsAPI current odds failed: {e}", style="yellow")
+        # Fallback to Bovada if still empty
+        if odds_out_df is None or odds_out_df.empty:
+            try:
+                odds_out_df = fetch_bovada_odds_current(pd.to_datetime(target_date))
+            except Exception as e:
+                console.print(f"Bovada odds fetch failed: {e}", style="yellow")
+        # Save standardized odds and merge
+        if odds_out_df is not None and not odds_out_df.empty:
+            try:
+                game_odds_out.parent.mkdir(parents=True, exist_ok=True)
+                odds_out_df.to_csv(game_odds_out, index=False)
+                console.print({"game_odds_rows": int(len(odds_out_df)), "output": str(game_odds_out)})
+            except Exception as e:
+                console.print(f"Failed to save game odds CSV: {e}", style="yellow")
+            _merge_odds_df(odds_out_df)
 
     # Save
     if not out_path:
