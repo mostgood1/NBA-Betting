@@ -77,22 +77,28 @@ def data_static(path: str):
 
 @app.route("/predictions_<date>.csv")
 def serve_predictions_csv(date: str):
-    """Serve predictions_YYYY-MM-DD.csv from repo root for frontend CSV fetches."""
-    p = BASE_DIR / f"predictions_{date}.csv"
-    if not p.exists():
-        from flask import abort
-        abort(404)
-    return send_from_directory(str(BASE_DIR), p.name)
+    """Serve predictions_YYYY-MM-DD.csv from data/processed (fallback root)."""
+    processed = BASE_DIR / "data" / "processed" / f"predictions_{date}.csv"
+    if processed.exists():
+        return send_from_directory(str(processed.parent), processed.name)
+    legacy = BASE_DIR / f"predictions_{date}.csv"
+    if legacy.exists():
+        return send_from_directory(str(BASE_DIR), legacy.name)
+    from flask import abort
+    abort(404)
 
 
 @app.route("/props_predictions_<date>.csv")
 def serve_props_predictions_csv(date: str):
-    """Serve props_predictions_YYYY-MM-DD.csv from repo root for frontend CSV fetches."""
-    p = BASE_DIR / f"props_predictions_{date}.csv"
-    if not p.exists():
-        from flask import abort
-        abort(404)
-    return send_from_directory(str(BASE_DIR), p.name)
+    """Serve props_predictions_YYYY-MM-DD.csv from data/processed (fallback root)."""
+    processed = BASE_DIR / "data" / "processed" / f"props_predictions_{date}.csv"
+    if processed.exists():
+        return send_from_directory(str(processed.parent), processed.name)
+    legacy = BASE_DIR / f"props_predictions_{date}.csv"
+    if legacy.exists():
+        return send_from_directory(str(BASE_DIR), legacy.name)
+    from flask import abort
+    abort(404)
 
 
 @app.route("/health")
@@ -447,14 +453,14 @@ def _daily_update_job(do_push: bool) -> None:
 # ---------------- Data APIs (parity with NHL web) ---------------- #
 
 def _find_predictions_for_date(date_str: str) -> Optional[Path]:
-    # Prefer root predictions_YYYY-MM-DD.csv
-    p = BASE_DIR / f"predictions_{date_str}.csv"
+    # Prefer processed path
+    p = BASE_DIR / "data" / "processed" / f"predictions_{date_str}.csv"
     if p.exists():
         return p
-    # Fallbacks
-    for cand in sorted(BASE_DIR.glob("predictions_*.csv")):
-        if date_str in cand.name:
-            return cand
+    # Legacy root fallback
+    legacy = BASE_DIR / f"predictions_{date_str}.csv"
+    if legacy.exists():
+        return legacy
     return None
 
 
@@ -645,7 +651,7 @@ def api_props():
     try:
         # Prefer edges if available, fall back to predictions
         edges_p = BASE_DIR / "data" / "processed" / f"props_edges_{d}.csv"
-        preds_p = BASE_DIR / f"props_predictions_{d}.csv"
+        preds_p = BASE_DIR / "data" / "processed" / f"props_predictions_{d}.csv"
         df = _read_csv_if_exists(edges_p)
         src = "edges"
         if df is None or df.empty:

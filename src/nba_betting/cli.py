@@ -346,7 +346,7 @@ def predict_props_cmd(date_str: str, out_path: str | None, slate_only: bool):
     except Exception as e:
         console.print(f"Failed to predict props: {e}", style="red"); return
     if not out_path:
-        out_path = str(paths.root / f"props_predictions_{date_str}.csv")
+        out_path = str(paths.data_processed / f"props_predictions_{date_str}.csv")
     preds.to_csv(out_path, index=False)
     console.print(f"Saved props predictions to {out_path} (rows={len(preds)})")
 
@@ -1049,7 +1049,7 @@ def predict_date_cmd(date_str: str | None, merge_odds_csv: str | None, out_path:
 
     # Save
     if not out_path:
-        out_path = str(paths.root / f"predictions_{date_str}.csv")
+        out_path = str(paths.data_processed / f"predictions_{date_str}.csv")
     res.to_csv(out_path, index=False)
     console.print(f"Saved predictions to {out_path}")
 
