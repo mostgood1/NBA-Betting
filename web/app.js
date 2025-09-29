@@ -35,6 +35,14 @@ function fmtTimeEST(iso) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+function getQueryParam(name){
+  try{
+    const u = new URL(window.location.href);
+    const v = u.searchParams.get(name);
+    return v ? v.trim() : null;
+  }catch(e){ return null; }
+}
+
 function svgBadgeDataUrl(tri){
   const t = state.teams[tri] || {};
   const bg = (t.primary || '#444').replace('#','%23');
@@ -760,7 +768,10 @@ function setupControls(){
     }
     return best;
   };
-  const defaultDate = nearestScheduled(today) || (dates.includes(PIN_DATE) ? PIN_DATE : dates[0]);
+  const paramDate = getQueryParam('date');
+  const defaultDate = (paramDate && (sched.includes(paramDate) ? paramDate : paramDate))
+    || nearestScheduled(today)
+    || (dates.includes(PIN_DATE) ? PIN_DATE : dates[0]);
   picker.value = defaultDate;
   const go = async ()=>{
     let d = picker.value;
