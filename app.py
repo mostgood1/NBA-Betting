@@ -16,6 +16,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 
+# Ensure local package in src/ is importable (for odds, schedule, CLI)
+from pathlib import Path as _PathEarly
+BASE_DIR = _PathEarly(__file__).resolve().parent
+SRC_DIR = BASE_DIR / "src"
+import sys as _sys_early
+if str(SRC_DIR) not in _sys_early.path:
+    _sys_early.path.insert(0, str(SRC_DIR))
+
 try:
     # Optional (for scoreboard)
     from nba_api.stats.endpoints import scoreboardv2 as _scoreboardv2
@@ -25,7 +33,7 @@ except Exception:  # pragma: no cover
     _nba_http = None  # type: ignore
 
 try:
-    # local package for odds fetching
+    # local package for odds fetching (now importable due to early sys.path insert)
     from nba_betting.odds_bovada import fetch_bovada_odds_current as _fetch_bovada_odds_current  # type: ignore
 except Exception:  # pragma: no cover
     _fetch_bovada_odds_current = None  # type: ignore
@@ -38,14 +46,7 @@ try:  # lightweight optional dependency
 except Exception:
     pass
 
-
-BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
-
-# Ensure local package in src/ is importable (for schedule and CLI imports)
-SRC_DIR = BASE_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
 
 # Serve the static frontend under /web and redirect / -> /web/
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="/web")
