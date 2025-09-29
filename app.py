@@ -971,9 +971,11 @@ def api_cron_predict_date():
             }), 202
         # Synchronous mode (original behavior)
         rc = _run_to_file([str(py), "-m", "nba_betting.cli", "predict-date", "--date", d], log_file, cwd=BASE_DIR, env=env)
-        pred = BASE_DIR / f"predictions_{d}.csv"
+        # Locate predictions from either processed/ or legacy root
+        pred_path = _find_predictions_for_date(d)
+        pred = pred_path if pred_path is not None else (BASE_DIR / f"predictions_{d}.csv")
         odds = BASE_DIR / "data" / "processed" / f"game_odds_{d}.csv"
-        n_pred = int(len(pd.read_csv(pred))) if pred.exists() else 0
+        n_pred = int(len(pd.read_csv(pred))) if (hasattr(pred, 'exists') and pred.exists()) else (int(len(pd.read_csv(pred))) if pred_path is not None else 0)
         n_odds = int(len(pd.read_csv(odds))) if odds.exists() else 0
         pushed = None; push_detail = None
         if do_push:
@@ -982,7 +984,7 @@ def api_cron_predict_date():
         return jsonify({
             "date": d,
             "rc": int(rc),
-            "predictions": str(pred) if pred.exists() else None,
+            "predictions": (str(pred) if (hasattr(pred, 'exists') and pred.exists()) else (str(pred) if pred_path is not None else None)),
             "pred_rows": n_pred,
             "odds": str(odds) if odds.exists() else None,
             "odds_rows": n_odds,
