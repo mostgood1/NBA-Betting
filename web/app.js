@@ -1,5 +1,5 @@
 /*
-  NBA Slate Renderer
+  NBA Cards Renderer (NHL-style)
   - Loads schedule JSON (data/processed/schedule_2025_26.json)
   - Optionally loads predictions_{YYYY-MM-DD}.csv placed in the repo root
   - Renders game cards by date with team badges and recommendation chips
@@ -65,7 +65,24 @@ function svgBadgeDataUrl(tri){
 
 function teamLogoUrlByTricode(tri){
   // Prefer local actual logo if provided by the user in assets/logos/ (SVG recommended)
-  return `assets/logos/${tri.toUpperCase()}.svg`;
+  return `/web/assets/logos/${tri.toUpperCase()}.svg`;
+}
+
+function teamLineHTML(tri){
+  const t = state.teams[tri] || { name: tri };
+  const logo = teamLogoUrlByTricode(tri);
+  const fallback = svgBadgeDataUrl(tri);
+  const id = (state.teams[tri] && state.teams[tri].id) ? state.teams[tri].id : null;
+  const cdn = id ? [
+    `https://cdn.nba.com/logos/nba/${id}/primary/L/logo.svg`,
+    `https://cdn.nba.com/logos/nba/${id}/primary/L/logo.png`,
+    `https://cdn.nba.com/logos/nba/${id}/global/L/logo.svg`,
+    `https://cdn.nba.com/logos/nba/${id}/global/L/logo.png`
+  ] : [];
+  const dataCdn = cdn.join('|');
+  // Use local asset first; on error, fallback to png then CDN entries then badge
+  const img = `<img class="team-logo" src="${logo}" alt="${t.name} logo" data-tri="${tri}" data-i="-1" data-cdn="${dataCdn}" onerror="handleLogoError(this)" />`;
+  return `${img}<div class="name">${t.name}</div>`;
 }
 
 function teamPill(team) {
@@ -88,7 +105,7 @@ function teamPill(team) {
 }
 
 async function loadTeams() {
-  const res = await fetch('assets/teams_nba.json');
+  const res = await fetch('/web/assets/teams_nba.json');
   const data = await res.json();
   const map = {};
   for (const t of data) map[t.tricode] = t;
@@ -99,13 +116,13 @@ async function loadSchedule() {
   // Try dynamic API (auto-builds if missing), then fallback to static file
   let sched = [];
   try {
-    const r = await fetch('/api/schedule');
+  const r = await fetch('/api/schedule');
     if (r.ok) {
       sched = await r.json();
     }
   } catch(e) { /* ignore */ }
   if (!Array.isArray(sched) || sched.length === 0) {
-    const res = await fetch('../data/processed/schedule_2025_26.json');
+  const res = await fetch('/data/processed/schedule_2025_26.json');
     sched = await res.json();
   }
   // Filter out non-NBA exhibition teams that won't have logos/mappings
@@ -168,7 +185,7 @@ async function maybeInjectPinnedDate(dateStr){
 
 async function maybeLoadPredictions(dateStr) {
   state.predsByKey.clear();
-  const path = `../predictions_${dateStr}.csv`;
+  const path = `/predictions_${dateStr}.csv`;
   try {
     const res = await fetch(path);
     if (!res.ok) return; // optional
@@ -195,7 +212,7 @@ async function maybeLoadRecon(dateStr){
   state.reconByKey.clear();
   state.reconProps = [];
   // Games recon
-  const gpath = `../data/processed/recon_games_${dateStr}.csv`;
+  const gpath = `/data/processed/recon_games_${dateStr}.csv`;
   try{
     const res = await fetch(gpath);
     if (res.ok){
@@ -220,7 +237,7 @@ async function maybeLoadRecon(dateStr){
     }
   }catch(e){/* ignore */}
   // Props recon (optional)
-  const ppath = `../data/processed/recon_props_${dateStr}.csv`;
+  const ppath = `/data/processed/recon_props_${dateStr}.csv`;
   try{
     const res = await fetch(ppath);
     if (res.ok){
@@ -244,7 +261,7 @@ async function maybeLoadRecon(dateStr){
 
 async function maybeLoadPropsEdges(dateStr){
   state.propsEdges = [];
-  const path = `../data/processed/props_edges_${dateStr}.csv`;
+  const path = `/data/processed/props_edges_${dateStr}.csv`;
   try {
     const res = await fetch(path);
     if (!res.ok) return;
@@ -432,19 +449,19 @@ function recChips(pred){
     const side = p >= 0.5 ? 'HOME ML' : 'AWAY ML';
     const prob = (p >= 0.5 ? p : 1-p);
     const conf = Math.round(prob*100);
-    chips.push(`<span class="badge">${side} ${conf}%</span>`);
+    chips.push(`<span class="chip neutral">${side} ${conf}%</span>`);
   }
   // Spread edge if available
   if (pred.edge_spread) {
     const e = Number(pred.edge_spread);
     const label = e >= 0 ? `HOME ATS +${e.toFixed(1)}` : `AWAY ATS ${e.toFixed(1)}`;
-    chips.push(`<span class="badge">${label}</span>`);
+    chips.push(`<span class="chip neutral">${label}</span>`);
   }
   // Total edge
   if (pred.edge_total) {
     const e = Number(pred.edge_total);
     const label = e >= 0 ? `OVER +${e.toFixed(1)}` : `UNDER ${e.toFixed(1)}`;
-    chips.push(`<span class="badge">${label}</span>`);
+    chips.push(`<span class="chip neutral">${label}</span>`);
   }
   return chips.join(' ');
 }
@@ -469,10 +486,10 @@ function resultChips(recon){
 }
 
 function renderDate(dateStr){
-  const wrap = document.getElementById('games');
+  const wrap = document.getElementById('cards');
+  if (!wrap) return;
   wrap.innerHTML = '';
   const list = state.byDate.get(dateStr) || [];
-  document.getElementById('summary').textContent = `${dateStr} — ${list.length} games`;
   const showResults = document.getElementById('resultsToggle')?.checked;
   const hideOdds = document.getElementById('hideOdds')?.checked;
   // Build simple filters
@@ -665,16 +682,58 @@ function renderDate(dateStr){
         }
       }
     }catch(e){ /* ignore EV calc errors */ }
-    const tv = g.broadcasters_national || '';
+  const tv = g.broadcasters_national || '';
+  const venue = venueText;
+    // Determine final result class when results are shown
+    let w = 0, l = 0, psh = 0;
+    const isFinal = showResults && (actualHome!=null && actualAway!=null);
+    if (isFinal) {
+      // Moneyline
+      if (pred && pred.home_win_prob!=null) {
+        const pHome = Number(pred.home_win_prob);
+        if (Number.isFinite(pHome)){
+          const predWinner = pHome >= 0.5 ? home : away;
+          const actWinner = actualHome > actualAway ? home : (actualAway > actualHome ? away : null);
+          if (actWinner){ if (predWinner === actWinner) w++; else l++; }
+        }
+      }
+      // Totals
+      if (odds && Number.isFinite(Number(odds.total))) {
+        const tot = Number(odds.total);
+        if (totalActual!=null) {
+          const actSide = totalActual > tot ? 'Over' : (totalActual < tot ? 'Under' : 'Push');
+          if (pred && Number.isFinite(Number(pred.pred_total))){
+            const side = (Number(pred.pred_total) - tot >= 0) ? 'Over' : 'Under';
+            if (actSide === 'Push') psh++; else if (actSide === side) w++; else l++;
+          }
+        }
+      }
+      // ATS
+      if (odds && Number.isFinite(Number(odds.home_spread)) && pred && Number.isFinite(Number(pred.pred_margin))) {
+        const spr = Number(odds.home_spread);
+        const M = Number(pred.pred_margin);
+        const predATS = (M - spr >= 0) ? home : away;
+        const actualMargin = actualHome - actualAway;
+        const actualATS = (actualMargin > spr) ? home : (actualMargin < spr ? away : 'Push');
+        if (actualATS === 'Push') psh++; else if (predATS === actualATS) w++; else l++;
+      }
+    }
+    let resultClass = 'final-neutral';
+    if (isFinal) {
+      if (w > 0 && l === 0) resultClass = 'final-all-win';
+      else if (l > 0 && w === 0 && psh === 0) resultClass = 'final-all-loss';
+      else if (w > 0 && l > 0) resultClass = 'final-mixed';
+      else if (w === 0 && l === 0 && psh > 0) resultClass = 'final-push';
+    }
     const node = document.createElement('div');
-    node.className = 'game-card';
-    // Build detailed card body aligned to NFL example
-    let statusLine = 'Scheduled';
+    node.className = `card ${resultClass}`;
+    // Build detailed card body aligned to NHL example
+    let statusLine = '';
     if (showResults && (actualHome!=null && actualAway!=null)) {
       statusLine = 'FINAL';
     } else if (g.game_status_text) {
       statusLine = String(g.game_status_text);
-    } else if (timeStr) {
+    } else if (localTime) {
       statusLine = `Scheduled ${localTime}`;
     }
     const awayName = state.teams[away]?.name || away;
@@ -706,51 +765,126 @@ function renderDate(dateStr){
       }
       totalDetailLine = `O/U: ${fmtNum(tot)}${side?` • Model: ${side} (Edge ${(T - tot>=0?'+':'')}${(T - tot).toFixed(2)})`:''}${totResult}`;
     }
+    node.setAttribute('data-game-date', dtIso || dateStr);
+    node.setAttribute('data-home-abbr', home);
+    node.setAttribute('data-away-abbr', away);
+    // Build chips: Totals and Moneyline
+    let chipsTotals = '';
+    let chipsMoney = '';
+    if (odds) {
+      // Totals chips
+      const tot = Number(odds.total);
+      const T = pred && Number.isFinite(Number(pred.pred_total)) ? Number(pred.pred_total) : null;
+      let pOver = null, pUnder = null;
+      if (Number.isFinite(tot) && T!=null){
+        const sigmaTotal = 20.0;
+        const zOver = (tot - T) / sigmaTotal;
+        pOver = 1 - normCdf(zOver);
+        pUnder = 1 - pOver;
+      }
+      const priceOver = (odds.total_over_price!=null && odds.total_over_price!=='') ? Number(odds.total_over_price) : null;
+      const priceUnder = (odds.total_under_price!=null && odds.total_under_price!=='') ? Number(odds.total_under_price) : null;
+      const evO = (pOver!=null && priceOver!=null) ? evFromProbAndAmerican(pOver, priceOver) : null;
+      const evU = (pUnder!=null && priceUnder!=null) ? evFromProbAndAmerican(pUnder, priceUnder) : null;
+      const clsO = (evO==null? 'neutral' : (evO>0? 'positive' : (evO<0? 'negative' : 'neutral')));
+      const clsU = (evU==null? 'neutral' : (evU>0? 'positive' : (evU<0? 'negative' : 'neutral')));
+      const book = (odds.bookmaker || '').toString();
+      const bookAbbr = book ? (book.toUpperCase().slice(0,2)) : '';
+      const bookBadge = bookAbbr ? `<span class=\"book-badge\" title=\"${book}\">${bookAbbr}</span>` : '';
+      const overOddsTxt = (priceOver!=null? fmtOddsAmerican(priceOver) : '—');
+      const underOddsTxt = (priceUnder!=null? fmtOddsAmerican(priceUnder) : '—');
+      const overProbTxt = (pOver!=null? (pOver*100).toFixed(1)+'%' : '—');
+      const underProbTxt = (pUnder!=null? (pUnder*100).toFixed(1)+'%' : '—');
+      chipsTotals = `
+        <div class=\"row chips\">
+          <div class=\"chip title\">Totals ${Number.isFinite(tot)? tot.toFixed(1): ''}</div>
+          <div class=\"chip ${clsO}\">Over ${overOddsTxt} · ${overProbTxt} ${bookBadge}</div>
+          <div class=\"chip ${clsU}\">Under ${underOddsTxt} · ${underProbTxt} ${bookBadge}</div>
+        </div>`;
+      // Moneyline chips
+      const hML = odds.home_ml, aML = odds.away_ml;
+      const aImp = impliedProbAmerican(aML); const hImp = impliedProbAmerican(hML);
+      const pH = pred && pred.home_win_prob!=null ? Number(pred.home_win_prob) : (hImp!=null? hImp : null);
+      const pA = (pH!=null) ? (1 - pH) : (aImp!=null? aImp : null);
+      const evH = (pH!=null && hML!=null ? evFromProbAndAmerican(pH, hML) : null);
+      const evA = (pA!=null && aML!=null ? evFromProbAndAmerican(pA, aML) : null);
+      const clsH = (evH==null? 'neutral' : (evH>0? 'positive' : (evH<0? 'negative' : 'neutral')));
+      const clsA = (evA==null? 'neutral' : (evA>0? 'positive' : (evA<0? 'negative' : 'neutral')));
+      const aOddsTxt = (aML!=null? fmtOddsAmerican(aML): '—');
+      const hOddsTxt = (hML!=null? fmtOddsAmerican(hML): '—');
+      const aProbTxt = (pA!=null? (pA*100).toFixed(1)+'%': '—');
+      const hProbTxt = (pH!=null? (pH*100).toFixed(1)+'%': '—');
+      chipsMoney = `
+        <div class=\"row chips\">
+          <div class=\"chip title\">Moneyline</div>
+          <div class=\"chip ${clsA}\">Away ${aOddsTxt} · ${aProbTxt} ${bookBadge}</div>
+          <div class=\"chip ${clsH}\">Home ${hOddsTxt} · ${hProbTxt} ${bookBadge}</div>
+        </div>`;
+    }
+
     node.innerHTML = `
-      <div class="row">
-        <div class="teams">
-          <div class="subtle">${venueLine}</div>
-          <div class="subtle">${statusLine}</div>
-          <div class="matchup-row">
-            <div class="team-side">
-              ${teamPill(away)}
-              <div class="score-block">
-                <div class="score">${(actualAway!=null? fmtNum(actualAway,0) : (projAway!=null? fmtNum(projAway,0) : ''))}</div>
-                ${(actualAway!=null && projAway!=null) ? `<div class=\"score-proj\">Proj ${fmtNum(projAway,0)}</div>` : ''}
-              </div>
-            </div>
-            <div class="at">@</div>
-            <div class="team-side">
-              ${teamPill(home)}
-              <div class="score-block">
-                <div class="score">${(actualHome!=null? fmtNum(actualHome,0) : (projHome!=null? fmtNum(projHome,0) : ''))}</div>
-                ${(actualHome!=null && projHome!=null) ? `<div class=\"score-proj\">Proj ${fmtNum(projHome,0)}</div>` : ''}
-              </div>
-            </div>
-          </div>
-          ${totalModel!=null? `<div class=\"subtle\">Total (model): ${totalModel.toFixed(2)}</div>`: ''}
-          ${totalActual!=null? `<div class=\"subtle\">Total (actual): ${totalActual.toFixed(2)}</div>`: ''}
-          ${diffLine? `<div class=\"subtle\">${diffLine}</div>`: ''}
-        </div>
-        <div class="badges">${recs}</div>
+      <div class="row head">
+        <div class="game-date js-local-time">${dtIso || dateStr}</div>
+        ${venue ? `<div class=\"venue\">${venue}</div>` : ''}
+        <div class="state">${statusLine}</div>
+        <div class="period-pill"></div>
+        <div class="time-left">${localTime || ''}</div>
+        ${isFinal ? `<div class=\"result-badge\">${w}W-${l}L${psh>0?`-${psh}P`:''}</div>` : ''}
       </div>
-      ${wpLine ? `<div class=\"subtle\">${wpLine}</div>` : ''}
-  ${accuracyLine ? `<div class=\"subtle\">${accuracyLine}</div>` : ''}
-  ${evWinnerLine ? `<div class=\"subtle\">${evWinnerLine}</div>` : ''}
-  ${evSpreadLine ? `<div class=\"subtle\">${evSpreadLine}</div>` : ''}
-  ${evTotalLine ? `<div class=\"subtle\">${evTotalLine}</div>` : ''}
-      ${atsLine ? `<div class=\"subtle\">${atsLine}</div>` : ''}
-      ${totalDetailLine ? `<div class=\"subtle\">${totalDetailLine}</div>` : ''}
-      ${!hideOdds && oddsBlock ? oddsBlock : ''}
-      ${finals ? `<div class="badges">${finals}</div>` : ''}
-      ${propsBadges ? `<div class="badges">${propsBadges}</div>` : ''}
+      <div class="row matchup">
+        <div class="team side">
+          <div class="team-line">${teamLineHTML(away)}</div>
+          <div class="score-block">
+            <div class="live-score js-live-away">${(actualAway!=null? fmtNum(actualAway,0) : '—')}</div>
+            <div class="sub proj-score">${(projAway!=null? fmtNum(projAway,0) : '—')}</div>
+          </div>
+        </div>
+        <div style="text-align:center; font-weight:700;">@</div>
+        <div class="team side">
+          <div class="team-line">${teamLineHTML(home)}</div>
+          <div class="score-block">
+            <div class="live-score js-live-home">${(actualHome!=null? fmtNum(actualHome,0) : '—')}</div>
+            <div class="sub proj-score">${(projHome!=null? fmtNum(projHome,0) : '—')}</div>
+          </div>
+        </div>
+      </div>
+      ${chipsTotals}
+      ${chipsMoney}
+      <div class="row details">
+        <div class="detail-col">
+          ${totalModel!=null? `<div>Model Total: <strong>${totalModel.toFixed(2)}</strong></div>`: ''}
+          ${totalActual!=null? `<div>Actual Total: <strong>${totalActual.toFixed(2)}</strong></div>`: ''}
+          ${diffLine? `<div>Diff: <strong>${diffLine.split(': ')[1]}</strong></div>`: ''}
+          ${wpLine ? `<div>${wpLine}</div>` : ''}
+          ${accuracyLine ? `<div>${accuracyLine}</div>` : ''}
+        </div>
+      </div>
+      ${evWinnerLine ? `<div class=\"row details small\"><div class=\"detail-col\">${evWinnerLine}</div></div>` : ''}
+      ${evSpreadLine ? `<div class=\"row details small\"><div class=\"detail-col\">${evSpreadLine}</div></div>` : ''}
+      ${evTotalLine ? `<div class=\"row details small\"><div class=\"detail-col\">${evTotalLine}</div></div>` : ''}
+      ${atsLine ? `<div class=\"row details small\"><div class=\"detail-col\">${atsLine}</div></div>` : ''}
+      ${totalDetailLine ? `<div class=\"row details small\"><div class=\"detail-col\">${totalDetailLine}</div></div>` : ''}
+      ${!hideOdds && oddsBlock ? `<div class=\"row details small\"><div class=\"detail-col\">${oddsBlock}</div></div>` : ''}
+      ${finals ? `<div class=\"row details small\"><div class=\"detail-col\">${finals}</div></div>` : ''}
+      ${propsBadges ? `<div class=\"row details small\"><div class=\"detail-col\">${propsBadges}</div></div>` : ''}
     `;
     wrap.appendChild(node);
   }
+  // Format all game dates into the user's local timezone similar to NHL
+  try{
+    const nodes = Array.from(document.querySelectorAll('.card .js-local-time'));
+    const fmt = new Intl.DateTimeFormat(undefined, { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:true });
+    nodes.forEach(node=>{
+      const iso = node.textContent;
+      const d = new Date(iso);
+      if (!isNaN(d)) node.textContent = fmt.format(d);
+    });
+  }catch(_){}
 }
 
 function setupControls(){
   const picker = document.getElementById('datePicker');
+  const applyBtn = document.getElementById('applyBtn');
   const todayBtn = document.getElementById('todayBtn');
   const refreshBtn = document.getElementById('refreshOddsBtn');
   const dates = Array.from(state.byDate.keys()).sort();
@@ -790,8 +924,19 @@ function setupControls(){
     await maybeLoadPropsEdges(d);
     await maybeLoadRecon(d);
     renderDate(d);
+    const note = document.getElementById('note');
+    if (note) {
+      if ((state.byDate.get(d) || []).length === 0) {
+        note.textContent = `No games on ${d}.`;
+        note.classList.remove('hidden');
+      } else {
+        note.classList.add('hidden');
+      }
+    }
   };
-  picker.addEventListener('change', go);
+  const apply = ()=> { go(); };
+  picker.addEventListener('change', ()=>{}); // wait for Apply to match NHL UX
+  if (applyBtn) applyBtn.addEventListener('click', apply);
   const resToggle = document.getElementById('resultsToggle');
   if (resToggle) resToggle.addEventListener('change', go);
   if (refreshBtn) refreshBtn.addEventListener('click', async ()=>{

@@ -1,55 +1,48 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NBA Slate</title>
-  <link rel="stylesheet" href="styles.css" />
+  <title>NBA Betting – Cards</title>
+  <link rel="stylesheet" href="/web/styles.css" />
 </head>
 <body>
-  <header class="site-header">
-    <div class="container">
-      <h1>NBA Slate</h1>
-      <nav class="site-nav">
-        <a href="/web/index.html" aria-current="page">Games</a>
-        <a href="/web/recommendations.html">Recommendations</a>
-        <a href="/web/props.html">Props</a>
-        <a href="/web/reconciliation.html">Reconciliation</a>
-        <a href="/web/odds_coverage.html">Odds Coverage</a>
-      </nav>
-      <div class="controls">
-        <label for="datePicker" class="sr-only">Select date</label>
-        <input type="date" id="datePicker" title="Select date" />
-        <label class="toggle"><input type="checkbox" id="resultsToggle" /> Show results</label>
-        <label class="toggle"><input type="checkbox" id="hideOdds" /> Hide Odds</label>
-        <button id="todayBtn">Today</button>
-        <button id="refreshOddsBtn" title="Fetch Bovada odds for selected date">Refresh Odds</button>
-        <label title="Store an admin key in this browser to enable Refresh Odds"><span class="sr-only">Admin Key</span>
-          <input type="password" id="adminKey" placeholder="Admin Key" />
-        </label>
+  <header>
+    <div class="container header-inner">
+      <h1>NBA Betting – Cards</h1>
+      <form id="controls" onsubmit="return false;">
+        <label>Date: <input type="date" id="datePicker" /></label>
+        <button type="button" id="applyBtn" class="btn">Apply</button>
+        <button type="button" id="todayBtn" class="btn">Today</button>
+        <button type="button" id="refreshOddsBtn" class="btn" title="Refresh odds for this date">Refresh Odds</button>
+  <label class="control-label">Show results <input type="checkbox" id="resultsToggle" /></label>
+  <label class="control-label">Hide odds <input type="checkbox" id="hideOdds" /></label>
+        <a class="btn" href="/web/recommendations.html">Recommendations</a>
+        <a class="btn" href="/web/props.html">Props</a>
+        <a class="btn" href="/web/reconciliation.html">Reconciliation</a>
+        <a class="btn" href="/web/odds_coverage.html">Odds Coverage</a>
+      </form>
+      <div class="hb-wrap">
+        <div class="hb-dot" id="hbDot" title="Live polling active"></div>
+        <div id="last-sb" class="last-sb" title="Last scoreboard poll (client clock)">—</div>
       </div>
     </div>
   </header>
-  <main class="container">
-    <section id="summary" class="summary"></section>
-    <section id="games" class="games-grid"></section>
-  </main>
-  <footer class="site-footer">
+  <main>
     <div class="container">
-      <span>Data: NBA CDN schedule; Model recs via predictions_YYYY-MM-DD.csv</span>
+  <div id="note" class="alert hidden"></div>
+      <div id="cards" class="cards"></div>
     </div>
-  </footer>
-  <script src="app.js"></script>
+  </main>
+  <script src="/web/app.js"></script>
   <script>
-    // Persist admin key for refresh endpoint
+    // Persist admin key for refresh endpoint (optional)
     (function(){
-      const el = document.getElementById('adminKey');
-      if (!el) return;
       const saved = sessionStorage.getItem('ADMIN_KEY') || '';
+      if (!document.getElementById('adminKey')) return;
+      const el = document.getElementById('adminKey');
       if (saved) el.value = saved;
-      el.addEventListener('change', ()=>{
-        sessionStorage.setItem('ADMIN_KEY', el.value || '');
-      });
+      el.addEventListener('change', ()=> sessionStorage.setItem('ADMIN_KEY', el.value || ''));
     })();
   </script>
 </body>

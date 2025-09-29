@@ -194,9 +194,9 @@ This produces an edges CSV you can sort by EV or edge for actionable picks witho
 - Rscript not found: install R, add `Rscript.exe` to PATH, or set `RSCRIPT_PATH` to the full path.
 - OddsAPI 422 for player props: the API may not have props at your snapshot timestamp; re-run with `--mode current` near tip-off or try a different date.
 
-## Frontend & Render Deployment (mirrors NFL-Betting)
+## Frontend & Render Deployment (mirrors NHL-Betting)
 
-This repo now deploys exactly like `mostgood1/NFL-Betting`: a minimal Flask app serves the static frontend under `web/` and redirects `/` → `/web/index.html`. Gunicorn runs the Flask app on Render.
+This repo deploys like the NHL site: a minimal Flask app serves the cards at `/` using the static assets in `web/`. Gunicorn runs the Flask app on Render.
 
 What’s included for deploy:
 - `app.py` – Flask server that serves `web/` assets and a `/health` endpoint.
@@ -224,12 +224,13 @@ Environment variables (optional but consistent with NFL app):
 - `PYTHONUNBUFFERED=1`
 
 Routing:
-- `/` redirects to `/web/index.html`
-- Static assets are served under `/web/*` (e.g., `/web/assets/logos/BOS.svg`).
+- `/` serves the cards page directly
+- Static assets are under `/web/*` (e.g., `/web/assets/logos/BOS.svg`)
+- Legacy `/web/` and `/web/index.html` redirect to `/` for a single canonical entrypoint
 
 Notes:
-- The UI is static; all data files it reads (CSV/JSON) are bundled in the repo and served statically.
-- To update slate data/odds snapshots, commit updated files and push; Render will redeploy automatically.
+- The UI is static; the app serves JSON/CSV artifacts directly from the repo (`/data/...`) for the client to render.
+- Prefer hitting cron endpoints to regenerate predictions/odds artifacts; the page will reflect updates without redeploy.
 
 ## Admin endpoints (optional)
 

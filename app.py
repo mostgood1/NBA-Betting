@@ -48,19 +48,21 @@ except Exception:
 
 WEB_DIR = BASE_DIR / "web"
 
-# Serve the static frontend under /web and redirect / -> /web/
+# Serve the static frontend under /web, and serve the cards at '/'
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="/web")
 
 
 @app.route("/")
 def root():
-    # Make the NBA slate the homepage (explicitly target index.html under /web)
-    return redirect("/web/index.html")
+    # Serve the NBA slate homepage directly at '/'
+    return send_from_directory(str(WEB_DIR), "index.html")
 
 
 @app.route("/web/")
+@app.route("/web/index.html")
 def web_index():
-    return send_from_directory(str(WEB_DIR), "index.html")
+    # Redirect legacy URL to root for a single canonical entrypoint
+    return redirect("/")
 
 
 @app.route("/web/<path:path>")

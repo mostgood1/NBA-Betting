@@ -1,22 +1,4 @@
 {
 	"version": "2.0.0",
-	"tasks": [
-		{
-			"label": "Serve web folder",
-			"type": "shell",
-			"command": "python -m http.server 8080",
-			"args": [],
-			"isBackground": true,
-			"problemMatcher": [],
-			"group": "build"
-		},
-		{
-			"label": "Serve web folder",
-			"type": "shell",
-			"command": "python -m http.server 8080",
-			"args": [],
-			"isBackground": true,
-			"group": "build"
-		}
-	]
+	"tasks": []
 }
