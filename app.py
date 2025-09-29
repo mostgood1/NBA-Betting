@@ -196,6 +196,37 @@ def _ev_from_prob_and_american(p: Optional[float], odds: Any) -> Optional[float]
         return None
 
 
+def _has_games_for_date(date_str: str, verbose: bool = False) -> bool:
+    """Return True if there are NBA games on the given date.
+
+    Preference order:
+    1) nba_api ScoreboardV2 (if available)
+    2) Bovada odds feed (if available)
+    """
+    # First try nba_api ScoreboardV2
+    try:
+        if _scoreboardv2 is not None:
+            sb = _scoreboardv2.ScoreboardV2(game_date=date_str, day_offset=0, timeout=30)
+            nd = sb.get_normalized_dict()
+            gh = pd.DataFrame(nd.get("GameHeader", []))
+            if not gh.empty and len(gh) > 0:
+                return True
+    except Exception as e:
+        if verbose:
+            print(f"[_has_games_for_date] scoreboard error: {e}")
+    # Fallback to Bovada odds
+    try:
+        if _fetch_bovada_odds_current is not None:
+            dt = pd.to_datetime(date_str).to_pydatetime()
+            o = _fetch_bovada_odds_current(dt, verbose=False)
+            if isinstance(o, pd.DataFrame) and not o.empty:
+                return True
+    except Exception as e:
+        if verbose:
+            print(f"[_has_games_for_date] bovada error: {e}")
+    return False
+
+
 # ---------------- Admin: daily update (mirrors NFL-Betting shape) ---------------- #
 _job_state = {
     "running": False,
@@ -889,6 +920,20 @@ def api_cron_predict_date():
     d = _parse_date_param(request, default_to_today=True)
     do_push = (str(request.args.get("push", "0")).lower() in {"1","true","yes"})
     do_async = (str(request.args.get("async", "0")).lower() in {"1","true","yes"})
+    skip_if_no_games = (str(request.args.get("skip_if_no_games", "1")).lower() in {"1","true","yes"})
+    # If there are no games today and skipping is allowed, fast-exit.
+    if skip_if_no_games and d:
+        try:
+            if not _has_games_for_date(d):
+                return jsonify({
+                    "status": "skipped",
+                    "reason": "no games for date",
+                    "date": d,
+                    "push": do_push,
+                })
+        except Exception:
+            # On check failure, proceed to run to be safe
+            pass
     # Choose python executable
     py = os.environ.get("PYTHON", (os.environ.get("VIRTUAL_ENV") or "") + "/bin/python")
     if not py or not Path(str(py)).exists():
