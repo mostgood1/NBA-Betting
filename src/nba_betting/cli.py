@@ -943,11 +943,17 @@ def predict_date_cmd(date_str: str | None, merge_odds_csv: str | None, out_path:
         if odds_df is None or odds_df.empty:
             return
         o = odds_df.copy()
-        if 'date' in o.columns:
-            try:
-                o['date'] = pd.to_datetime(o['date']).dt.date
-            except Exception:
-                pass
+        # Normalize 'date' to python date on both frames to avoid dtype mismatches
+        try:
+            if 'date' in o.columns:
+                o['date'] = pd.to_datetime(o['date'], errors='coerce').dt.date
+        except Exception:
+            pass
+        try:
+            if 'date' in res.columns:
+                res['date'] = pd.to_datetime(res['date'], errors='coerce').dt.date
+        except Exception:
+            pass
         # Normalize names
         if 'home_team' in o.columns:
             o['home_team'] = o['home_team'].apply(normalize_team)
