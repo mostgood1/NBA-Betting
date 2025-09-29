@@ -45,7 +45,7 @@ cronJobs:
     plan: free
     image: alpine:3.19
     command: >-
-      sh -lc "apk add --no-cache curl; curl -fsS -X POST \"$BASE_URL/api/cron/predict-date?push=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
+      sh -lc "apk add --no-cache curl; curl -fsS -X POST \"$BASE_URL/api/cron/predict-date?push=1&skip_if_no_games=1&async=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
     envVars:
       - key: BASE_URL
         # Example: https://nba-betting.onrender.com (set after first deploy)
@@ -74,7 +74,9 @@ cronJobs:
     plan: free
     image: alpine:3.19
     command: >-
-      sh -lc "apk add --no-cache curl coreutils; curl -fsS -X POST \"$BASE_URL/api/cron/reconcile-games?push=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
+      sh -lc "apk add --no-cache curl coreutils; \
+      curl -fsS -X POST \"$BASE_URL/api/cron/predict-date?push=1&skip_if_no_games=1&async=1\" -H \"Authorization: Bearer $CRON_TOKEN\" && \
+      curl -fsS -X POST \"$BASE_URL/api/cron/reconcile-games?push=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
     envVars:
       - key: BASE_URL
         sync: false
