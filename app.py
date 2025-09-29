@@ -887,6 +887,8 @@ def api_cron_predict_date():
     if not _cron_auth_ok(request):
         return jsonify({"error": "unauthorized"}), 401
     d = _parse_date_param(request, default_to_today=True)
+    do_push = (str(request.args.get("push", "0")).lower() in {"1","true","yes"})
+    do_async = (str(request.args.get("async", "0")).lower() in {"1","true","yes"})
     # Choose python executable
     py = os.environ.get("PYTHON", (os.environ.get("VIRTUAL_ENV") or "") + "/bin/python")
     if not py or not Path(str(py)).exists():
@@ -896,13 +898,31 @@ def api_cron_predict_date():
     log_file = logs_dir / f"cron_predict_date_{d}_{stamp}.log"
     try:
         env = {"PYTHONPATH": str(SRC_DIR)}
+        if do_async:
+            # Background job to avoid Render timeouts
+            def _job():
+                try:
+                    _run_to_file([str(py), "-m", "nba_betting.cli", "predict-date", "--date", d], log_file, cwd=BASE_DIR, env=env)
+                    if do_push:
+                        _git_commit_and_push(msg=f"predict-date {d}")
+                except Exception:
+                    pass
+            t = threading.Thread(target=_job, daemon=True)
+            t.start()
+            return jsonify({
+                "status": "started",
+                "date": d,
+                "log_file": str(log_file),
+                "push": do_push,
+            }), 202
+        # Synchronous mode (original behavior)
         rc = _run_to_file([str(py), "-m", "nba_betting.cli", "predict-date", "--date", d], log_file, cwd=BASE_DIR, env=env)
         pred = BASE_DIR / f"predictions_{d}.csv"
         odds = BASE_DIR / "data" / "processed" / f"game_odds_{d}.csv"
         n_pred = int(len(pd.read_csv(pred))) if pred.exists() else 0
         n_odds = int(len(pd.read_csv(odds))) if odds.exists() else 0
         pushed = None; push_detail = None
-        if str(request.args.get("push", "0")).lower() in {"1","true","yes"}:
+        if do_push:
             ok, detail = _git_commit_and_push(msg=f"predict-date {d}")
             pushed = bool(ok); push_detail = detail
         return jsonify({
