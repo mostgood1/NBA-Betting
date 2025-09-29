@@ -1,0 +1,9 @@
+[2025-09-29T18:58:17] Starting daily update...
+[2025-09-29T18:58:17] Running: C:\Users\mostg\OneDrive\Coding\NBA-Betting\.venv\Scripts\python.exe -m nba_betting.cli predict --input C:\Users\mostg\OneDrive\Coding\NBA-Betting\samples\matchups.csv
+[2025-09-29T18:58:17] Starting: C:\Users\mostg\OneDrive\Coding\NBA-Betting\.venv\Scripts\python.exe -m nba_betting.cli predict --input C:\Users\mostg\OneDrive\Coding\NBA-Betting\samples\matchups.csv
+----------------------------------- Predict -----------------------------------
+Updating Elo ---------------------------------------- 100% 0:00:00
+Saved predictions to C:\Users\mostg\OneDrive\Coding\NBA-Betting\predictions.csv
+[2025-09-29T18:58:21] Exited with code 0
+[2025-09-29T18:58:21] Exit code: 0
+[2025-09-29T18:58:21] Daily update finished. ok=True

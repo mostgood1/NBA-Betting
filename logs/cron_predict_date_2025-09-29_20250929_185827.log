@@ -1,0 +1,6 @@
+[2025-09-29T18:58:27] Starting: C:\Users\mostg\OneDrive\Coding\NBA-Betting\.venv\Scripts\python.exe -m nba_betting.cli predict-date --date 2025-09-29
+------------------------------- Predict (Date) --------------------------------
+Scoreboard fetch failed (HTTPSConnectionPool(host='stats.nba.com', port=443): 
+Read timed out. (read timeout=30)); trying fallbacks for 2025-09-29.
+No games found on 2025-09-29 (API down and no history/schedule fallback).
+[2025-09-29T18:59:00] Exited with code 0

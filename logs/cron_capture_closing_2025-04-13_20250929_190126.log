@@ -1,0 +1,9 @@
+[2025-09-29T19:01:26] Starting: C:\Users\mostg\OneDrive\Coding\NBA-Betting\.venv\Scripts\python.exe -m nba_betting.cli export-closing-lines-csv --date 2025-04-13
+-------------------------- Export closing lines CSV ---------------------------
+{
+    'rows': 3,
+    'output': 
+'C:\\Users\\mostg\\OneDrive\\Coding\\NBA-Betting\\data\\processed\\closing_line
+s_2025-04-13.csv'
+}
+[2025-09-29T19:01:28] Exited with code 0
