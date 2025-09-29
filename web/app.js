@@ -397,8 +397,9 @@ function evFromProbAndAmerican(p, odds){
 
 function evClass(ev){
   if (ev == null) return '';
-  if (ev >= 0.10) return 'High';
-  if (ev >= 0.05) return 'Medium';
+  // Align to NHL confidence thresholds
+  if (ev >= 0.08) return 'High';
+  if (ev >= 0.04) return 'Medium';
   return 'Low';
 }
 
@@ -542,7 +543,8 @@ function renderDate(dateStr){
     const badge = (e)=>`<span class="badge" title="${e.stat.toUpperCase()} ${e.side} ${e.line} @ ${e.bookmaker}\nEV ${e.ev.toFixed(2)} | Edge ${(e.edge*100).toFixed(1)}%">${e.player_name}: ${e.stat.toUpperCase()} ${e.side} ${e.line} (${(e.edge*100).toFixed(1)}%)</span>`;
     const propsBadges = [...edgesA.map(badge), ...edgesH.map(badge)].join(' ');
 
-    const odds = state.oddsByKey.get(key);
+  const odds = state.oddsByKey.get(key);
+  const hasAnyOdds = !!(odds && (odds.home_ml!=null || odds.away_ml!=null || Number.isFinite(Number(odds.total)) || Number.isFinite(Number(odds.home_spread))));
     // Compute detailed lines similar to NFL cards
   let oddsBlock = '';
     if (odds){
@@ -630,10 +632,11 @@ function renderDate(dateStr){
       accuracyLine = `Accuracy: Winner ${tick(winOk)} · ATS ${tick(atsOk)} · Total ${tick(totOk)}`;
     }
 
-    // EV summaries (Winner/Spread/Total)
+    // EV summaries (Winner/Spread/Total) and recommendation candidates
     let evWinnerLine = '';
     let evSpreadLine = '';
     let evTotalLine = '';
+    const recCands = [];
     try{
       // Winner EV
       if (odds && pred && (odds.home_ml!=null || odds.away_ml!=null) && pred.home_win_prob!=null){
@@ -646,6 +649,8 @@ function renderDate(dateStr){
           if ((evH??-Infinity) >= (evA??-Infinity)) { side = home; ev = evH; } else { side = away; ev = evA; }
           evWinnerLine = `Winner: ${side} (EV ${(ev*100).toFixed(1)}%) • ${evClass(ev)}`;
         }
+        if (evH!=null) recCands.push({market:'moneyline', bet:'home_ml', label:'Home ML', ev:evH, odds:odds.home_ml, book:odds.bookmaker});
+        if (evA!=null) recCands.push({market:'moneyline', bet:'away_ml', label:'Away ML', ev:evA, odds:odds.away_ml, book:odds.bookmaker});
       }
       // Spread EV (approximate with normal, sigma assumption)
       if (odds && pred && odds.home_spread!=null && pred.pred_margin!=null){
@@ -663,6 +668,8 @@ function renderDate(dateStr){
           if ((evH??-Infinity) >= (evA??-Infinity)) { evSpreadLine = `Spread: ${home} (EV ${(evH*100).toFixed(1)}%) • ${evClass(evH)}`; }
           else { evSpreadLine = `Spread: ${away} (EV ${(evA*100).toFixed(1)}%) • ${evClass(evA)}`; }
         }
+        if (evH!=null) recCands.push({market:'spread', bet:'home_spread', label:`${home} ATS`, ev:evH, odds:priceHome, book:odds.bookmaker});
+        if (evA!=null) recCands.push({market:'spread', bet:'away_spread', label:`${away} ATS`, ev:evA, odds:priceAway, book:odds.bookmaker});
       }
       // Total EV (approximate with normal, sigma assumption)
       if (odds && pred && odds.total!=null && pred.pred_total!=null){
@@ -680,6 +687,8 @@ function renderDate(dateStr){
           if ((evO??-Infinity) >= (evU??-Infinity)) { evTotalLine = `Total: Over (EV ${(evO*100).toFixed(1)}%) • ${evClass(evO)}`; }
           else { evTotalLine = `Total: Under (EV ${(evU*100).toFixed(1)}%) • ${evClass(evU)}`; }
         }
+         if (evO!=null) recCands.push({market:'totals', bet:'over', label:'Over', ev:evO, odds:priceOver, book:odds.bookmaker});
+         if (evU!=null) recCands.push({market:'totals', bet:'under', label:'Under', ev:evU, odds:priceUnder, book:odds.bookmaker});
       }
     }catch(e){ /* ignore EV calc errors */ }
   const tv = g.broadcasters_national || '';
@@ -725,8 +734,9 @@ function renderDate(dateStr){
       else if (w > 0 && l > 0) resultClass = 'final-mixed';
       else if (w === 0 && l === 0 && psh > 0) resultClass = 'final-push';
     }
-    const node = document.createElement('div');
-    node.className = `card ${resultClass}`;
+  const node = document.createElement('div');
+  node.className = `card ${resultClass}`;
+  if (hasAnyOdds) node.setAttribute('data-has-odds','1'); else node.setAttribute('data-has-odds','0');
     // Build detailed card body aligned to NHL example
     let statusLine = '';
     if (showResults && (actualHome!=null && actualAway!=null)) {
@@ -768,8 +778,9 @@ function renderDate(dateStr){
     node.setAttribute('data-game-date', dtIso || dateStr);
     node.setAttribute('data-home-abbr', home);
     node.setAttribute('data-away-abbr', away);
-    // Build chips: Totals and Moneyline
+  // Build chips: Totals, Spread, and Moneyline
     let chipsTotals = '';
+  let chipsSpread = '';
     let chipsMoney = '';
     if (odds) {
       // Totals chips
@@ -809,6 +820,44 @@ function renderDate(dateStr){
           <div class=\"chip ${clsU} ${isModelUnder?'model-pick':''}\">Under ${underOddsTxt} · ${underProbTxt} ${bookBadge} ${evUBadge} ${isModelUnder?modelBadge:''}</div>
           ${pushProb!=null ? `<div class=\"chip neutral\">Push · ${(pushProb*100).toFixed(1)}%</div>` : ''}
         </div>`;
+      // Spread chips (NBA)
+      if (Number.isFinite(Number(odds.home_spread))) {
+        const sprH = Number(odds.home_spread);
+        const sprA = -sprH;
+        const M = pred && Number.isFinite(Number(pred.pred_margin)) ? Number(pred.pred_margin) : null;
+        let pHomeCover = null, pAwayCover = null;
+        if (M!=null) {
+          const sigmaMargin = 12.0;
+          const zHome = (sprH - M) / sigmaMargin;
+          pHomeCover = 1 - normCdf(zHome);
+          pAwayCover = 1 - pHomeCover;
+        }
+        const priceHome = (odds.home_spread_price!=null && odds.home_spread_price!=='') ? Number(odds.home_spread_price) : null;
+        const priceAway = (odds.away_spread_price!=null && odds.away_spread_price!=='') ? Number(odds.away_spread_price) : null;
+        const evH = (pHomeCover!=null && priceHome!=null) ? evFromProbAndAmerican(pHomeCover, priceHome) : null;
+        const evA = (pAwayCover!=null && priceAway!=null) ? evFromProbAndAmerican(pAwayCover, priceAway) : null;
+        const clsH = (evH==null? 'neutral' : (evH>0? 'positive' : (evH<0? 'negative' : 'neutral')));
+        const clsA = (evA==null? 'neutral' : (evA>0? 'positive' : (evA<0? 'negative' : 'neutral')));
+        const evHBadge = (evH==null? '' : `<span class="ev-badge ${evH>0?'pos':(evH<0?'neg':'neu')}">EV ${(evH>0?'+':'')}${(evH*100).toFixed(1)}%</span>`);
+        const evABadge = (evA==null? '' : `<span class="ev-badge ${evA>0?'pos':(evA<0?'neg':'neu')}">EV ${(evA>0?'+':'')}${(evA*100).toFixed(1)}%</span>`);
+        const aOddsTxt = (priceAway!=null? fmtOddsAmerican(priceAway): '—');
+        const hOddsTxt = (priceHome!=null? fmtOddsAmerican(priceHome): '—');
+        const aProbTxt = (pAwayCover!=null? (pAwayCover*100).toFixed(1)+'%': '—');
+        const hProbTxt = (pHomeCover!=null? (pHomeCover*100).toFixed(1)+'%': '—');
+        const modelHome = (M!=null) ? ((M - sprH) >= 0) : false;
+        const modelAway = (M!=null) ? (!modelHome) : false;
+        const book = (odds.bookmaker || '').toString();
+        const bookAbbr = book ? (book.toUpperCase().slice(0,2)) : '';
+        const bookBadge = bookAbbr ? `<span class=\"book-badge\" title=\"${book}\">${bookAbbr}</span>` : '';
+        const modelBadge = `<span class=\"model-badge\" title=\"Model pick\">PICK</span>`;
+        chipsSpread = `
+          <div class=\"row chips\">
+            <div class=\"chip title\">Spread</div>
+            <div class=\"chip ${clsA} ${modelAway?'model-pick':''}\">Away ${sprA>0?`+${fmtNum(sprA)}`:fmtNum(sprA)} ${aOddsTxt} · ${aProbTxt} ${bookBadge} ${evABadge} ${modelAway?modelBadge:''}</div>
+            <div class=\"chip ${clsH} ${modelHome?'model-pick':''}\">Home ${sprH>0?`+${fmtNum(sprH)}`:fmtNum(sprH)} ${hOddsTxt} · ${hProbTxt} ${bookBadge} ${evHBadge} ${modelHome?modelBadge:''}</div>
+          </div>`;
+      }
+
       // Moneyline chips
       const hML = odds.home_ml, aML = odds.away_ml;
       const aImp = impliedProbAmerican(aML); const hImp = impliedProbAmerican(hML);
@@ -832,6 +881,64 @@ function renderDate(dateStr){
           <div class=\"chip ${clsA} ${isModelAway?'model-pick':''}\">Away ${aOddsTxt} · ${aProbTxt} ${bookBadge} ${evABadge} ${isModelAway?modelBadge:''}</div>
           <div class=\"chip ${clsH} ${isModelHome?'model-pick':''}\">Home ${hOddsTxt} · ${hProbTxt} ${bookBadge} ${evHBadge} ${isModelHome?modelBadge:''}</div>
         </div>`;
+    }
+
+    // Build recommendation and model pick blocks
+    let recHtml = '';
+    if (recCands.length){
+      const best = recCands.slice().sort((a,b)=>((b.ev??-999)-(a.ev??-999)))[0];
+      const conf = evClass(best.ev || 0).toLowerCase();
+      let recResult = '';
+      if (isFinal && odds) {
+        try{
+          if (best.market==='moneyline'){
+            const want = best.bet==='home_ml' ? home : away;
+            const act = (actualHome>actualAway)?home:((actualAway>actualHome)?away:null);
+            if (act){ recResult = (act===want)?'Win':'Loss'; }
+          } else if (best.market==='totals' && Number.isFinite(Number(odds.total))){
+            const tot = Number(odds.total);
+            const actTotal = totalActual;
+            if (actTotal!=null){
+              const actSide = actTotal>tot?'Over':(actTotal<tot?'Under':'Push');
+              const want = best.bet==='over'?'Over':'Under';
+              recResult = (actSide==='Push')?'Push':(actSide===want?'Win':'Loss');
+            }
+          } else if (best.market==='spread' && Number.isFinite(Number(odds.home_spread))){
+            const spr = Number(odds.home_spread);
+            const actualMargin = actualHome-actualAway;
+            const actATS = (actualMargin>spr)?home:((actualMargin<spr)?away:'Push');
+            const want = (best.bet==='home_spread')?home:away;
+            recResult = (actATS==='Push')?'Push':(actATS===want?'Win':'Loss');
+          }
+        }catch(_){/* ignore */}
+      }
+      const bookAbbr = (best.book||'').toString().toUpperCase().slice(0,2);
+      recHtml = `
+        <div class=\"row details small\"><div class=\"detail-col\">
+          Recommendation: <strong>${best.label}</strong>
+          <span class=\"rec-conf ${conf}\">${evClass(best.ev||0)}</span>
+          · EV ${(best.ev>0?'+':'')}${(100*(best.ev||0)).toFixed(1)}%
+          ${best.odds!=null?` · ${fmtOddsAmerican(best.odds)}`:''}
+          ${bookAbbr?` @ ${bookAbbr}`:''}
+          ${recResult?` · Result: <strong>${recResult}</strong>`:''}
+        </div></div>`;
+    }
+
+    let linesLine = '';
+    if (odds){
+      const hML = (odds.home_ml!=null)?fmtOddsAmerican(odds.home_ml):'—';
+      const aML = (odds.away_ml!=null)?fmtOddsAmerican(odds.away_ml):'—';
+      const tot = Number.isFinite(Number(odds.total)) ? Number(odds.total).toFixed(1) : '—';
+      const spr = Number.isFinite(Number(odds.home_spread)) ? fmtNum(Number(odds.home_spread)) : '—';
+      linesLine = `Lines: ML H ${hML} / A ${aML} · Total ${tot} · PL/Spread H ${spr}`;
+    }
+
+    let modelPickHtml = '';
+    if (pred && pred.home_win_prob!=null){
+      const pH = Number(pred.home_win_prob);
+      const pickLbl = pH>=0.5 ? 'Home ML' : 'Away ML';
+      const pct = (100*Math.max(pH,1-pH)).toFixed(1)+'%';
+      modelPickHtml = `<div class=\"row details small\"><div class=\"detail-col\"><div class=\"model-pill\">Model Pick: <strong>${pickLbl}</strong> · ${pct}</div></div></div>`;
     }
 
     node.innerHTML = `
@@ -861,7 +968,9 @@ function renderDate(dateStr){
         </div>
       </div>
       ${chipsTotals}
+      ${chipsSpread}
       ${chipsMoney}
+      ${linesLine?`<div class=\"row details small\"><div class=\"detail-col\"><div>${linesLine}</div></div></div>`:''}
       <div class="row details">
         <div class="detail-col">
           ${totalModel!=null? `<div>Model Total: <strong>${totalModel.toFixed(2)}</strong></div>`: ''}
@@ -871,6 +980,8 @@ function renderDate(dateStr){
           ${accuracyLine ? `<div>${accuracyLine}</div>` : ''}
         </div>
       </div>
+      ${recHtml}
+      ${modelPickHtml}
       ${evWinnerLine ? `<div class=\"row details small\"><div class=\"detail-col\">${evWinnerLine}</div></div>` : ''}
       ${evSpreadLine ? `<div class=\"row details small\"><div class=\"detail-col\">${evSpreadLine}</div></div>` : ''}
       ${evTotalLine ? `<div class=\"row details small\"><div class=\"detail-col\">${evTotalLine}</div></div>` : ''}
@@ -879,6 +990,7 @@ function renderDate(dateStr){
       ${!hideOdds && oddsBlock ? `<div class=\"row details small\"><div class=\"detail-col\">${oddsBlock}</div></div>` : ''}
       ${finals ? `<div class=\"row details small\"><div class=\"detail-col\">${finals}</div></div>` : ''}
       ${propsBadges ? `<div class=\"row details small\"><div class=\"detail-col\">${propsBadges}</div></div>` : ''}
+      <div class=\"row details small\"><div class=\"detail-col\"><div>Debug: ${dateStr} | ${home}-${away} | hasOdds=${hasAnyOdds?1:0}</div></div></div>
     `;
     wrap.appendChild(node);
   }
