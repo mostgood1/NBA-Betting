@@ -34,9 +34,13 @@ except Exception:  # pragma: no cover
 
 try:
     # local package for odds fetching (now importable due to early sys.path insert)
-    from nba_betting.odds_bovada import fetch_bovada_odds_current as _fetch_bovada_odds_current  # type: ignore
+    from nba_betting.odds_bovada import (
+        fetch_bovada_odds_current as _fetch_bovada_odds_current,
+        probe_bovada as _probe_bovada,
+    )  # type: ignore
 except Exception:  # pragma: no cover
     _fetch_bovada_odds_current = None  # type: ignore
+    _probe_bovada = None  # type: ignore
 
 # Optional: load environment variables from a .env file if present
 try:  # lightweight optional dependency
@@ -1000,6 +1004,25 @@ def api_cron_refresh_bovada():
         })
     except Exception as e:
         return jsonify({"error": f"bovada fetch failed: {e}"}), 500
+
+
+@app.route("/api/cron/probe-bovada")
+def api_cron_probe_bovada():
+    """Debug endpoint: probe Bovada endpoints and report event counts for a date.
+
+    Auth: CRON_TOKEN or ADMIN_KEY. Query: date=YYYY-MM-DD
+    """
+    if not (_cron_auth_ok(request) or _admin_auth_ok(request)):
+        return jsonify({"error": "unauthorized"}), 401
+    d = _parse_date_param(request, default_to_today=True)
+    if _probe_bovada is None:
+        return jsonify({"error": "probe not available"}), 500
+    try:
+        dt = pd.to_datetime(d)
+        out = _probe_bovada(dt, verbose=True)
+        return jsonify(out)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/cron/capture-closing", methods=["POST", "GET"])

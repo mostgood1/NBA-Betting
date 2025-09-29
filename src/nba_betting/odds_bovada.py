@@ -12,14 +12,33 @@ from typing import Any
 from .teams import normalize_team
 
 
-ENDPOINTS = [
-    # Region A (Americas), description feed; NBA main
-    "https://www.bovada.lv/services/sports/event/v2/events/A/description/basketball/nba",
-    # Some slates may also appear under basketball/usa/nba; keep as fallback
-    "https://www.bovada.lv/services/sports/event/v2/events/A/description/basketball/usa/nba",
-    # Preseason sometimes appears here
-    "https://www.bovada.lv/services/sports/event/v2/events/A/description/basketball/nba-preseason",
+_BOVADA_REGIONS = ["A", "B", "C"]  # A: Americas, others as fallback
+_BOVADA_BASES = [
+    "https://www.bovada.lv/services/sports/event/v2/events/{region}/description/basketball/nba",
+    "https://www.bovada.lv/services/sports/event/v2/events/{region}/description/basketball/usa/nba",
+    "https://www.bovada.lv/services/sports/event/v2/events/{region}/description/basketball/nba-preseason",
 ]
+_BOVADA_PARAMS = [
+    "",
+    "?lang=en",
+    "?lang=en&preMatchOnly=true&marketFilterId=def",
+    "?lang=en&marketFilterId=all",
+]
+ENDPOINTS = [
+    base.format(region=r) + q
+    for r in _BOVADA_REGIONS
+    for base in _BOVADA_BASES
+    for q in _BOVADA_PARAMS
+]
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://www.bovada.lv",
+    "Referer": "https://www.bovada.lv/sports/basketball/nba",
+    "Connection": "keep-alive",
+}
 
 
 def _safe_get(d: dict, *keys: str, default=None):
@@ -201,7 +220,7 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
     payloads = []
     for url in ENDPOINTS:
         try:
-            r = requests.get(url, timeout=30, headers={"User-Agent": "nba-betting/1.0"})
+            r = requests.get(url, timeout=30, headers=HEADERS)
             if r.ok:
                 payloads.append(r.json())
         except Exception as e:
@@ -268,3 +287,60 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
         except Exception:
             continue
     return pd.DataFrame(rows)
+
+
+def probe_bovada(date: datetime, verbose: bool = False) -> dict:
+    """Probe Bovada endpoints and report counts for the given date (US/Eastern match).
+
+    Returns a dict with target_date and a list of results per URL including HTTP status and event counts.
+    """
+    # Compute target ET date similar to fetch function
+    if ZoneInfo is not None:
+        try:
+            et = ZoneInfo("US/Eastern")
+        except Exception:
+            et = None
+    else:
+        et = None
+    ts = pd.to_datetime(date, utc=True)
+    if et is not None:
+        try:
+            target_et = ts.tz_convert(et).date()
+        except Exception:
+            target_et = ts.date()
+    else:
+        target_et = ts.date()
+    out = {"target_date": str(target_et), "results": []}
+    for url in ENDPOINTS:
+        ent = {"url": url, "status": None, "events_total": 0, "events_on_date": 0, "error": None}
+        try:
+            r = requests.get(url, timeout=30, headers=HEADERS)
+            ent["status"] = r.status_code
+            if r.ok:
+                payload = r.json()
+                total = 0
+                on_date = 0
+                for events in _walk_event_lists(payload):
+                    lst = list(events or [])
+                    total += len(lst)
+                    for ev in lst:
+                        try:
+                            dt = _to_dt_utc(ev.get("startTime"))
+                            if dt is None:
+                                continue
+                            try:
+                                ct = dt.tz_convert(et).date() if et is not None else dt.date()
+                            except Exception:
+                                ct = dt.date()
+                            if ct == target_et:
+                                on_date += 1
+                        except Exception:
+                            pass
+                ent["events_total"] = total
+                ent["events_on_date"] = on_date
+            else:
+                ent["error"] = f"http {r.status_code}"
+        except Exception as e:
+            ent["error"] = str(e)
+        out["results"].append(ent)
+    return out
