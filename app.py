@@ -1002,7 +1002,9 @@ def api_cron_reconcile_games():
     # Load predictions for that date
     pred_path = BASE_DIR / f"predictions_{d}.csv"
     if not pred_path.exists():
-        return jsonify({"error": f"predictions file not found for {d}", "path": str(pred_path)}), 404
+        # Gracefully return rows=0 so cron runs don't fail on off days or missed predictions
+        out = BASE_DIR / "data" / "processed" / f"recon_games_{d}.csv"
+        return jsonify({"date": d, "rows": 0, "output": None, "reason": "predictions missing"})
     try:
         preds = pd.read_csv(pred_path)
     except Exception as e:
