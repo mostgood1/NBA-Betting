@@ -29,10 +29,16 @@ const TEAM_ALIASES = {
 // Optional: treat only official schedule dates as selectable
 const STRICT_SCHEDULE_DATES = true;
 
-function fmtTimeEST(iso) {
+function fmtLocalTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function fmtLocalDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString();
 }
 
 function getQueryParam(name){
@@ -479,19 +485,16 @@ function renderDate(dateStr){
   }
   for (const g of list){
   const time = g.datetime_est || g.datetime_utc || g.date_est || g.date_utc;
-  let timeStr = '';
-  if (typeof time === 'string'){
-    const tpart = time.includes('T') ? time.split('T')[1] : '';
-    timeStr = tpart ? tpart.slice(0,5) : '';
-  } else {
-    timeStr = fmtTimeEST(time);
-  }
+  // Compute local date/time strings preferably from UTC timestamp
+  const dtIso = g.datetime_utc || g.datetime_est || null;
+  const localTime = dtIso ? fmtLocalTime(dtIso) : (typeof time === 'string' ? (time.includes('T') ? time.split('T')[1].slice(0,5) : '') : fmtLocalTime(time));
+  const localDate = dtIso ? fmtLocalDate(dtIso) : (typeof g.date_est === 'string' ? g.date_est.slice(0,10) : (typeof g.date_utc === 'string' ? g.date_utc.slice(0,10) : ''));
   const locBits = [];
   if (g.arena_name) locBits.push(g.arena_name);
   if (g.arena_city) locBits.push(g.arena_city);
   if (g.arena_state) locBits.push(g.arena_state);
   const venueText = locBits.length ? locBits.join(', ') : (g.home_tricode && state.teams[g.home_tricode]?.name ? state.teams[g.home_tricode].name : 'Home');
-  const venueLine = `Venue: ${venueText}${g.broadcasters_national?` • TV: ${g.broadcasters_national}`:''} • ${dateStr} ET`;
+  const venueLine = `Venue: ${venueText}${g.broadcasters_national?` • TV: ${g.broadcasters_national}`:''} • ${localDate}`;
     const away = g.away_tricode; const home = g.home_tricode;
     const key = `${dateStr}|${home}|${away}`; // note schedule is away@home
     const pred = state.predsByKey.get(key);
@@ -672,7 +675,7 @@ function renderDate(dateStr){
     } else if (g.game_status_text) {
       statusLine = String(g.game_status_text);
     } else if (timeStr) {
-      statusLine = `Scheduled ${timeStr} ET`;
+      statusLine = `Scheduled ${localTime}`;
     }
     const awayName = state.teams[away]?.name || away;
     const homeName = state.teams[home]?.name || home;
