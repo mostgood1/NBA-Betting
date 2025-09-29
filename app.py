@@ -994,10 +994,24 @@ def api_cron_reconcile_games():
                 })
         except Exception:
             pass
-        sb = _scoreboardv2.ScoreboardV2(game_date=d, day_offset=0, timeout=30)
-        nd = sb.get_normalized_dict()
-        gh = pd.DataFrame(nd.get("GameHeader", []))
-        ls = pd.DataFrame(nd.get("LineScore", []))
+        # Simple retry/backoff on ScoreboardV2 due to occasional timeouts
+        tries = 0
+        last_err: Optional[Exception] = None
+        gh = pd.DataFrame(); ls = pd.DataFrame()
+        while tries < 2:
+            try:
+                sb = _scoreboardv2.ScoreboardV2(game_date=d, day_offset=0, timeout=45)
+                nd = sb.get_normalized_dict()
+                gh = pd.DataFrame(nd.get("GameHeader", []))
+                ls = pd.DataFrame(nd.get("LineScore", []))
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                tries += 1
+                time.sleep(3)
+        if last_err is not None and (gh.empty or ls.empty):
+            return jsonify({"error": f"scoreboard fetch failed: {last_err}"}), 502
         out_rows = []
         if not gh.empty and not ls.empty:
             cgh = {c.upper(): c for c in gh.columns}
@@ -1094,6 +1108,7 @@ def api_cron_config():
                 "/api/cron/refresh-bovada",
                 "/api/cron/predict-date",
                 "/api/cron/capture-closing",
+                "/api/cron/reconcile-games",
                 "/api/cron/daily-update",
             ],
         })
