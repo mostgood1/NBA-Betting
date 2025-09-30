@@ -90,6 +90,10 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
         return ("team" in mt) or ("team" in dg_desc)
 
     dgs = ev.get("displayGroups", []) or []
+    # Candidates collected across markets, then reduced to best pick
+    ml_cands: list[dict] = []  # each: {"home": int, "away": int}
+    spread_cands: dict[float, dict] = {}  # abs(handicap) -> {"home_h": float, "away_h": float, "home_price": int, "away_price": int}
+    total_cands: dict[float, dict] = {}   # total -> {"over_price": int, "under_price": int}
     # Flatten markets
     for dg in dgs:
         dg_desc = str(dg.get("description") or dg.get("name") or "").lower()
@@ -114,25 +118,27 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     "total", "totals", "total points", "over/under", "o/u", "game total", "points total"
                 ]):
                     continue
-            # Moneyline
+            # Moneyline (keep names tight to avoid picking race/winner props)
             is_ml = any(k in mtype for k in [
                 "moneyline", "money line", "match odds", "match result", "to win",
-                "head to head", "h2h", "winner", "game winner", "match winner"
-            ])
+                "head to head", "h2h"
+            ]) and not any(k in mtype for k in ["race", "first to", "margin", "exact", "by "])
             if is_ml:
+                temp = {"home": None, "away": None}
                 for oc in m.get("outcomes", []) or []:
                     typ = (oc.get("type") or "").lower()
                     desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
                     price = _to_american(_safe_get(oc, "price", "american"))
                     if price is None:
                         continue
-                    # Map to home/away using explicit type when present, else by name matching
                     if typ in ("home", "h") or (typ == "" and home_norm and (home_norm in desc)):
-                        out["home_ml"] = price
+                        temp["home"] = price
                     elif typ in ("away", "a") or (typ == "" and away_norm and (away_norm in desc)):
-                        out["away_ml"] = price
+                        temp["away"] = price
+                if temp["home"] is not None and temp["away"] is not None:
+                    ml_cands.append(temp)
             # Point spread
-            elif any(k in mtype for k in ["spread", "point spread", "handicap", "line", "against the spread", "ats"]):
+            elif any(k in mtype for k in ["spread", "point spread", "handicap", "against the spread", "ats"]) and ("player" not in mtype):
                 if _looks_team_total(mtype, dg_desc):
                     # safeguard: don't confuse team totals w/ spreads
                     pass
@@ -155,14 +161,16 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                         spr_price = _to_american(s) if s is not None else None
                     except Exception:
                         spr_price = None
+                    key = round(abs(hval), 1)
+                    rec = spread_cands.setdefault(key, {"home_h": None, "away_h": None, "home_price": None, "away_price": None})
                     if typ in ("home", "h") or (typ == "" and home_norm and (home_norm in desc)):
-                        out["home_spread"] = hval
+                        rec["home_h"] = hval
                         if spr_price is not None:
-                            out["home_spread_price"] = spr_price
+                            rec["home_price"] = spr_price
                     elif typ in ("away", "a") or (typ == "" and away_norm and (away_norm in desc)):
-                        out["away_spread"] = hval
+                        rec["away_h"] = hval
                         if spr_price is not None:
-                            out["away_spread_price"] = spr_price
+                            rec["away_price"] = spr_price
             # Game Total (exclude team totals and player/prop totals)
             elif any(k in mtype for k in ["total", "totals", "total points", "over/under", "o/u", "game total", "points total"]) and not any(k in mtype for k in ["team", "player", "race", "alt"]):
                 # Total outcomes with over/under; handicap is the total line
@@ -185,16 +193,16 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     # Sanity: ignore implausible NBA full-game totals (likely half/quarter/team totals slipped through)
                     if hval < 150 or hval > 330:
                         continue
-                    out["total"] = hval
+                    rec = total_cands.setdefault(round(hval,1), {"over_price": None, "under_price": None})
                     # capture over/under prices
                     try:
                         s = price_obj.get("american")
                         if s is not None:
                             pr = _to_american(s)
                             if "over" in typ:
-                                out["total_over_price"] = pr
+                                rec["over_price"] = pr
                             elif "under" in typ:
-                                out["total_under_price"] = pr
+                                rec["under_price"] = pr
                     except Exception:
                         pass
             # Heuristic fallbacks when keywords are missing
@@ -216,14 +224,14 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                             hval = None
                         if hval is None or hval < 150 or hval > 330:
                             continue
-                        out["total"] = hval
+                        rec = total_cands.setdefault(round(hval,1), {"over_price": None, "under_price": None})
                         pr = _to_american(price_obj.get("american"))
                         t = (oc.get("type") or oc.get("description") or "").lower()
                         if pr is not None:
                             if "over" in t:
-                                out["total_over_price"] = pr
+                                rec["over_price"] = pr
                             elif "under" in t:
-                                out["total_under_price"] = pr
+                                rec["under_price"] = pr
                 # Detect SPREAD: outcomes for both teams with handicap within range
                 if out["home_spread"] is None or out["away_spread"] is None:
                     for oc in outs:
@@ -238,19 +246,22 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                         typ = (oc.get("type") or "").lower()
                         desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
                         pr = _to_american((price_obj or {}).get("american"))
+                        key = round(abs(hval), 1)
+                        rec = spread_cands.setdefault(key, {"home_h": None, "away_h": None, "home_price": None, "away_price": None})
                         if (typ in ("home", "h")) or (home_norm and home_norm in desc):
-                            out["home_spread"] = hval
+                            rec["home_h"] = hval
                             if pr is not None:
-                                out["home_spread_price"] = pr
+                                rec["home_price"] = pr
                         elif (typ in ("away", "a")) or (away_norm and away_norm in desc):
-                            out["away_spread"] = hval
+                            rec["away_h"] = hval
                             if pr is not None:
-                                out["away_spread_price"] = pr
+                                rec["away_price"] = pr
                 # Detect ML: two team outcomes without handicap values
                 if out["home_ml"] is None or out["away_ml"] is None:
                     # Ensure most outcomes have no handicap
                     no_hcap = [o for o in outs if _safe_get(o, "price", "handicap") is None and o.get("handicap") is None]
                     if len(no_hcap) >= 2:
+                        temp = {"home": None, "away": None}
                         for oc in no_hcap:
                             typ = (oc.get("type") or "").lower()
                             desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
@@ -258,9 +269,45 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                             if pr is None:
                                 continue
                             if (typ in ("home", "h")) or (home_norm and home_norm in desc):
-                                out["home_ml"] = pr
+                                temp["home"] = pr
                             elif (typ in ("away", "a")) or (away_norm and away_norm in desc):
-                                out["away_ml"] = pr
+                                temp["away"] = pr
+                        if temp["home"] is not None and temp["away"] is not None:
+                            ml_cands.append(temp)
+    # Choose best ML candidate (first good one)
+    if ml_cands:
+        # Prefer the one with smaller absolute prices (rough proxy to avoid props with extreme prices)
+        ml_cands.sort(key=lambda d: (abs(d.get("home") or 0) + abs(d.get("away") or 0)))
+        out["home_ml"] = ml_cands[0].get("home")
+        out["away_ml"] = ml_cands[0].get("away")
+    # Choose best spread candidate: smallest abs handicap then juice closeness to -110
+    if spread_cands:
+        def spread_score(k: float, rec: dict) -> tuple:
+            hp = rec.get("home_price"); ap = rec.get("away_price")
+            # distance from -110 on each side (use 200 if missing)
+            d = (abs((abs(hp) if hp is not None else 200) - 110) + abs((abs(ap) if ap is not None else 200) - 110))
+            return (k, d)
+        best_key = sorted(((k, v) for k, v in spread_cands.items() if v.get("home_h") is not None and v.get("away_h") is not None), key=lambda kv: spread_score(kv[0], kv[1]))
+        if best_key:
+            k, rec = best_key[0]
+            out["home_spread"] = rec.get("home_h")
+            out["away_spread"] = rec.get("away_h")
+            out["home_spread_price"] = rec.get("home_price")
+            out["away_spread_price"] = rec.get("away_price")
+    # Choose best total candidate: require both prices; prefer prices near -110
+    if total_cands:
+        def total_score(line: float, rec: dict) -> tuple:
+            op = rec.get("over_price"); up = rec.get("under_price")
+            d = (abs((abs(op) if op is not None else 200) - 110) + abs((abs(up) if up is not None else 200) - 110))
+            # prefer mid-range totals as tiebreaker (e.g., 210-240 typical)
+            bias = abs(line - 225.0)
+            return (d, bias)
+        good = [(ln, rc) for ln, rc in total_cands.items() if rc.get("over_price") is not None and rc.get("under_price") is not None]
+        if good:
+            ln, rc = sorted(good, key=lambda it: total_score(it[0], it[1]))[0]
+            out["total"] = ln
+            out["total_over_price"] = rc.get("over_price")
+            out["total_under_price"] = rc.get("under_price")
     return out
 
 
