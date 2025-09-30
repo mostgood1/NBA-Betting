@@ -84,10 +84,15 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
             # If display group doesn't look like full game, require period_desc that looks like game/match
             if ("game lines" not in dg_desc) and not any(k in period_desc for k in ["game", "match", "full", "regular time", "regulation"]):
                 # Allow totals/spreads named as game types as a fallback
-                if not any(k in mtype for k in ["moneyline", "spread", "point spread", "total"]):
+                if not any(k in mtype for k in [
+                    "moneyline", "money line", "match odds", "match result", "to win",
+                    "spread", "point spread", "handicap", "line",
+                    "total", "totals", "total points", "over/under", "o/u"
+                ]):
                     continue
             # Moneyline
-            if "moneyline" in mtype:
+            is_ml = any(k in mtype for k in ["moneyline", "money line", "match odds", "match result", "to win"])
+            if is_ml:
                 for oc in m.get("outcomes", []) or []:
                     typ = (oc.get("type") or "").lower()
                     desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
@@ -104,7 +109,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     elif typ == "away" or (typ == "" and away_norm and (away_norm in desc)):
                         out["away_ml"] = price
             # Point spread
-            elif "spread" in mtype or "point spread" in mtype:
+            elif any(k in mtype for k in ["spread", "point spread", "handicap", "line"]):
                 # Home/Away outcomes with handicap
                 for oc in m.get("outcomes", []) or []:
                     typ = (oc.get("type") or "").lower()
@@ -134,7 +139,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                         if spr_price is not None:
                             out["away_spread_price"] = spr_price
             # Game Total (exclude team totals and player/prop totals)
-            elif "total" in mtype and not any(k in mtype for k in ["team", "player", "race", "alt"]):
+            elif any(k in mtype for k in ["total", "totals", "total points", "over/under", "o/u"]) and not any(k in mtype for k in ["team", "player", "race", "alt"]):
                 # Total outcomes with over/under; handicap is the total line
                 for oc in m.get("outcomes", []) or []:
                     price_obj = oc.get("price") or {}
