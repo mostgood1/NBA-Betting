@@ -133,8 +133,8 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                         out["away_spread"] = hval
                         if spr_price is not None:
                             out["away_spread_price"] = spr_price
-            # Game Total
-            elif "total" in mtype:
+            # Game Total (exclude team totals and player/prop totals)
+            elif "total" in mtype and not any(k in mtype for k in ["team", "player", "race", "alt"]):
                 # Total outcomes with over/under; handicap is the total line
                 for oc in m.get("outcomes", []) or []:
                     price_obj = oc.get("price") or {}
@@ -148,6 +148,9 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                         continue
                     # Only set total when period indicates a game/match or in a group named game lines
                     if ("game lines" not in dg_desc) and not any(k in period_desc for k in ["game", "match", "full", "regular"]):
+                        continue
+                    # Sanity: ignore implausible NBA full-game totals (likely quarter/team totals slipped through)
+                    if hval < 100 or hval > 330:
                         continue
                     out["total"] = hval
                     # capture over/under prices
@@ -282,7 +285,74 @@ def fetch_bovada_odds_current(date: datetime | str, verbose: bool = False) -> pd
                     })
         except Exception:
             continue
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # Sanity filters
+    def _clamp_ml(x):
+        try:
+            xi = int(x)
+            return xi if -20000 <= xi <= 20000 else None
+        except Exception:
+            return None
+    df["home_ml"] = df["home_ml"].apply(_clamp_ml)
+    df["away_ml"] = df["away_ml"].apply(_clamp_ml)
+    def _ok_spread(x):
+        try:
+            xv = float(x)
+            return xv if -50 <= xv <= 50 else None
+        except Exception:
+            return None
+    for c in ["home_spread","away_spread"]:
+        df[c] = df[c].apply(_ok_spread)
+    def _ok_total(x):
+        try:
+            xv = float(x)
+            return xv if 100 <= xv <= 330 else None
+        except Exception:
+            return None
+    df["total"] = df["total"].apply(_ok_total)
+    # De-duplicate: choose one row per game with the most complete data
+    keep_cols = [
+        "date","commence_time","home_team","visitor_team",
+        "home_ml","away_ml","home_spread","away_spread",
+        "home_spread_price","away_spread_price",
+        "total","total_over_price","total_under_price","bookmaker"
+    ]
+    df = df[keep_cols]
+    def pick_best(group: pd.DataFrame) -> pd.Series:
+        # Score completeness: count non-nulls in core fields; prefer rows with total present
+        core = ["home_ml","away_ml","home_spread","away_spread","total"]
+        g = group.copy()
+        g["_score"] = g[core].notna().sum(axis=1) + g["total"].notna().astype(int)
+        # Prefer realistic totals closer to median of group to avoid outliers if multiple totals present
+        if g["total"].notna().any():
+            med = g["total"].median(skipna=True)
+            g["_score"] += (g["total"].notna()).astype(int)
+            # small penalty for totals far from median
+            try:
+                g["_score"] -= (abs(g["total"] - med) / 10.0).fillna(0)
+            except Exception:
+                pass
+        # Highest score wins; tie-breaker earliest commence_time
+        g = g.sort_values(["_score","commence_time"], ascending=[False, True])
+        best = g.iloc[0].drop(labels=["_score"]) if "_score" in g.columns else g.iloc[0]
+        # Fill missing odds from others in the group if possible
+        for col in ["home_ml","away_ml","home_spread","away_spread","total",
+                    "home_spread_price","away_spread_price","total_over_price","total_under_price"]:
+            if pd.isna(best[col]):
+                vals = g[col].dropna()
+                if not vals.empty:
+                    best[col] = vals.iloc[0]
+        return best
+    df = df.groupby(["date","home_team","visitor_team"], as_index=False, sort=False).apply(pick_best)
+    # The groupby-apply can produce a multi-index in older pandas; ensure clean DataFrame
+    if not isinstance(df, pd.DataFrame):
+        df = pd.DataFrame(df)
+    # Ensure bookmaker is set
+    if "bookmaker" not in df.columns:
+        df["bookmaker"] = "bovada"
+    return df.reset_index(drop=True)
 
 
 def probe_bovada(date: datetime | str, verbose: bool = False) -> dict:
