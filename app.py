@@ -1089,8 +1089,11 @@ def api_cron_capture_closing():
 
 @app.route("/api/cron/predict-date", methods=["POST", "GET"])
 def api_cron_predict_date():
-    """Run predict-date for the given date to refresh predictions_YYYY-MM-DD.csv and odds CSV."""
-    if not _cron_auth_ok(request):
+    """Run predict-date for the given date to refresh predictions_YYYY-MM-DD.csv and odds CSV.
+
+    Auth: CRON_TOKEN (preferred) or ADMIN_KEY (fallback/manual).
+    """
+    if not (_cron_auth_ok(request) or _admin_auth_ok(request)):
         return jsonify({"error": "unauthorized"}), 401
     d = _parse_date_param(request, default_to_today=True)
     do_push = (str(request.args.get("push", "0")).lower() in {"1","true","yes"})
