@@ -1,115 +1,182 @@
-/*
-  NBA Cards Renderer (NHL-style)
-  - Loads schedule JSON (data/processed/schedule_2025_26.json)
-  - Optionally loads predictions_{YYYY-MM-DD}.csv placed in the repo root
-  - Renders game cards by date with team badges and recommendation chips
-*/
-
-const state = {
-  teams: {}, // tricode -> {name, primary, secondary}
-  schedule: [],
-  byDate: new Map(),
-  scheduleDates: [], // strictly from official schedule
-  predsByKey: new Map(), // key: date|homeTricode|awayTricode
-  propsEdges: [],
-  reconByKey: new Map(), // key: date|homeTricode|awayTricode -> actuals/errors
-  reconProps: [], // per player optional
-  oddsByKey: new Map(), // date|home|away -> odds snapshot
-  propsFilters: { minEdge: 0.03, minEV: 0, stats: new Set(), books: new Set() },
-};
-
-// Pin a historical date so it's easy to view in the UI
-const PIN_DATE = '2025-04-13';
-
-// Common name aliases that differ from our teams file names
+// Global config and state
+const STRICT_SCHEDULE_DATES = false;
+const PIN_DATE = '';
 const TEAM_ALIASES = {
-  'los angeles clippers': 'LAC',
+  'warriors': 'GSW', 'golden state': 'GSW', 'golden state warriors': 'GSW',
+  'lakers': 'LAL', 'los angeles lakers': 'LAL',
+  'clippers': 'LAC', 'la clippers': 'LAC', 'los angeles clippers': 'LAC',
+  'thunder': 'OKC', 'oklahoma city thunder': 'OKC',
+  'rockets': 'HOU', 'houston rockets': 'HOU',
 };
-
-// Optional: treat only official schedule dates as selectable
-const STRICT_SCHEDULE_DATES = true;
-
-function fmtLocalTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function fmtLocalDate(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleDateString();
-}
+const state = {
+  teams: {},
+  byDate: new Map(),
+  schedule: [],
+  scheduleDates: [],
+  predsByKey: new Map(),
+  oddsByKey: new Map(),
+  reconByKey: new Map(),
+  reconProps: [],
+  propsEdges: [],
+  propsFilters: { minEdge: 0.05, minEV: 0.0 },
+};
 
 function getQueryParam(name){
   try{
-    const u = new URL(window.location.href);
-    const v = u.searchParams.get(name);
-    return v ? v.trim() : null;
-  }catch(e){ return null; }
+    const url = new URL(window.location.href);
+    return url.searchParams.get(name);
+  }catch(_){ return null; }
 }
 
-function svgBadgeDataUrl(tri){
-  const t = state.teams[tri] || {};
-  const bg = (t.primary || '#444').replace('#','%23');
-  const fg = '%23FFFFFF';
-  const text = encodeURIComponent((tri || '').toUpperCase());
-  const name = encodeURIComponent(t.name || tri);
-  const svg = `<?xml version="1.0" encoding="UTF-8"?>\
-<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" aria-label="${name}">\
-  <rect rx="12" ry="12" width="96" height="96" fill="${bg}"/>\
-  <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-family="Inter,Arial,Helvetica,sans-serif" font-weight="700" font-size="42" fill="${fg}">${text}</text>\
-</svg>`;
-  return `data:image/svg+xml;utf8,${svg}`;
+function fmtLocalTime(iso){
+  try{
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return new Intl.DateTimeFormat(undefined, { hour:'2-digit', minute:'2-digit', hour12:true }).format(d);
+  }catch(_){ return ''; }
 }
 
-function teamLogoUrlByTricode(tri){
-  // Prefer local actual logo if provided by the user in assets/logos/ (SVG recommended)
-  return `/web/assets/logos/${tri.toUpperCase()}.svg`;
+function fmtLocalDate(iso){
+  try{
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return new Intl.DateTimeFormat(undefined, { year:'numeric', month:'2-digit', day:'2-digit' }).format(d);
+  }catch(_){ return ''; }
+}
+
+function teamLogoUrl(tri){
+  const t = String(tri||'').toUpperCase();
+  return `/web/assets/logos/${t}.svg`;
 }
 
 function teamLineHTML(tri){
-  const t = state.teams[tri] || { name: tri };
-  const logo = teamLogoUrlByTricode(tri);
-  const fallback = svgBadgeDataUrl(tri);
-  const id = (state.teams[tri] && state.teams[tri].id) ? state.teams[tri].id : null;
-  const cdn = id ? [
-    `https://cdn.nba.com/logos/nba/${id}/primary/L/logo.svg`,
-    `https://cdn.nba.com/logos/nba/${id}/primary/L/logo.png`,
-    `https://cdn.nba.com/logos/nba/${id}/global/L/logo.svg`,
-    `https://cdn.nba.com/logos/nba/${id}/global/L/logo.png`
-  ] : [];
-  const dataCdn = cdn.join('|');
-  // Use local asset first; on error, fallback to png then CDN entries then badge
-  const img = `<img class="team-logo" src="${logo}" alt="${t.name} logo" data-tri="${tri}" data-i="-1" data-cdn="${dataCdn}" onerror="handleLogoError(this)" />`;
-  return `${img}<div class="name">${t.name}</div>`;
+  const t = String(tri||'').toUpperCase();
+  const team = state.teams[t] || { tricode:t, name:t };
+  const svg = teamLogoUrl(t);
+  const png = svg.replace('.svg', '.png');
+  const cdnList = [png];
+  return `
+    <div class="team-line-inner">
+      <img src="${svg}" alt="${t}" class="logo" data-tri="${t}" data-cdn="${cdnList.join('|')}" onerror="handleLogoError(this)"/>
+      <span class="name">${team.name || t}</span>
+    </div>`;
 }
 
-function teamPill(team) {
-  const t = state.teams[team] || {};
-  const bg = t.primary || '#444';
-  const text = '#fff';
-  const logo = teamLogoUrlByTricode(team);
-  const fallback = svgBadgeDataUrl(team);
-  const id = (state.teams[team] && state.teams[team].id) ? state.teams[team].id : null;
-  const cdn = id ? [
-    `https://cdn.nba.com/logos/nba/${id}/primary/L/logo.svg`,
-    `https://cdn.nba.com/logos/nba/${id}/primary/L/logo.png`,
-    `https://cdn.nba.com/logos/nba/${id}/global/L/logo.svg`,
-    `https://cdn.nba.com/logos/nba/${id}/global/L/logo.png`
-  ] : [];
-  // Use a safe handler and data attributes to avoid HTML attribute quoting issues
-  const dataCdn = cdn.join('|');
-  const img = `<img class="team-logo" src="${logo}" alt="${t.name || team} logo" data-tri="${team}" data-i="-1" data-cdn="${dataCdn}" onerror="handleLogoError(this)" />`;
-  return `<span class="team-pill" style="background:${bg}20;border:1px solid ${bg}60;color:${text}" title="${t.name || team}">${img}<span class="team-name">${t.name || team}</span></span>`;
+async function loadTeams(){
+  try{
+    const res = await fetch('/web/assets/teams_nba.json');
+    if (!res.ok) throw new Error('teams fetch failed');
+    const arr = await res.json();
+    const map = {};
+    for (const t of arr){ map[String(t.tricode||'').toUpperCase()] = t; }
+    state.teams = map;
+  }catch(_){ state.teams = {}; }
 }
 
-async function loadTeams() {
-  const res = await fetch('/web/assets/teams_nba.json');
-  const data = await res.json();
-  const map = {};
-  for (const t of data) map[t.tricode] = t;
-  state.teams = map;
+async function maybeLoadOdds(dateStr){
+  state.oddsByKey.clear();
+  // Load from multiple sources and merge per-game, preferring Bovada entries
+  const sources = [
+    { path: `../data/processed/closing_lines_${dateStr}.csv`, label: 'closing' },
+    { path: `../data/processed/odds_${dateStr}.csv`, label: 'consensus' },
+    { path: `../data/processed/market_${dateStr}.csv`, label: 'market' },
+    { path: `../data/processed/game_odds_${dateStr}.csv`, label: 'bovada' },
+  ];
+  const files = [];
+  for (const s of sources){
+    try{ const r = await fetch(s.path); if (r.ok){ const t = await r.text(); if (t && t.trim().length>0) files.push({ label: s.label, text: t }); } }catch(_){/* ignore */}
+  }
+  if (!files.length) return;
+  function mergeOdds(base, add){
+    if (!base) return add;
+    const out = { ...base };
+    const addIsBovada = String(add.bookmaker||'').toLowerCase().includes('bovada') || String(add.source||'').toLowerCase().includes('bovada');
+    const isNum = v => v!=='' && v!=null && !Number.isNaN(Number(v));
+    const isSpread = v => isNum(v) && Math.abs(Number(v))<=50;
+    const isTotal = v => isNum(v) && Number(v)>=100 && Number(v)<=330;
+    const pickIf = (k, pred) => {
+      const cur = out[k]; const nxt = add[k];
+      const curOk = pred(cur); const nxtOk = pred(nxt);
+      if (addIsBovada && nxtOk) { out[k] = nxt; return; }
+      if (!curOk && nxtOk) out[k] = nxt;
+    };
+    if (!out.bookmaker && add.bookmaker) out.bookmaker = add.bookmaker;
+    pickIf('home_ml', isNum); pickIf('away_ml', isNum);
+    pickIf('home_spread', isSpread); pickIf('away_spread', isSpread);
+    pickIf('total', isTotal);
+    pickIf('home_spread_price', isNum); pickIf('away_spread_price', isNum);
+    pickIf('total_over_price', isNum); pickIf('total_under_price', isNum);
+    if (!out.commence_time && add.commence_time) out.commence_time = add.commence_time;
+    return out;
+  }
+  for (const f of files){
+    const rows = parseCSV(f.text);
+    if (!rows || rows.length<2) continue;
+    const headers = rows[0];
+    const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
+    const pick = (names)=>{ for (const n of names){ if (idx[n]!==undefined) return n; } return null; };
+    const dateCol = pick(['date','game_date','asof_date']);
+    const hCol = pick(['home_team','home_name','home','home_tricode']);
+    const aCol = pick(['visitor_team','away_team','away_name','away','away_tricode']);
+    const hsCol = pick(['home_spread','close_home_spread','spread_home','spread_h','home_line']);
+    const asCol = pick(['away_spread','close_away_spread','spread_away','spread_a']);
+    const spCol = pick(['spread','close_spread']);
+    const totCol = pick(['total','close_total','ou_total','ou_close']);
+    const hmlCol = pick(['home_ml','close_home_ml','ml_home']);
+    const amlCol = pick(['away_ml','close_away_ml','ml_away']);
+    const bookCol = pick(['bookmaker','source','consensus_source']);
+    const hSprPriceCol = pick(['home_spread_price','spread_home_price','home_spread_odds','home_spread_ml']);
+    const aSprPriceCol = pick(['away_spread_price','spread_away_price','away_spread_odds','away_spread_ml']);
+    const totOverPriceCol = pick(['total_over_price','ou_over_price','total_over_ml','close_total_over_ml']);
+    const totUnderPriceCol = pick(['total_under_price','ou_under_price','total_under_ml','close_total_under_ml']);
+    const commenceCol = pick(['commence_time','start_time','game_time']);
+    for (let i=1;i<rows.length;i++){
+      const r = rows[i];
+      const d = dateCol ? String(r[idx[dateCol]]||'').slice(0,10) : dateStr;
+      let h = hCol ? r[idx[hCol]] : null; let a = aCol ? r[idx[aCol]] : null;
+      if (!h || !a) continue;
+      const home = tricodeFromName(h);
+      const away = tricodeFromName(a);
+      const key = `${d}|${home}|${away}`;
+      let home_spread = null, away_spread = null;
+      if (hsCol && asCol){
+        home_spread = Number(r[idx[hsCol]]);
+        away_spread = Number(r[idx[asCol]]);
+      } else if (spCol){
+        const s = Number(r[idx[spCol]]);
+        home_spread = s;
+        away_spread = (Number.isFinite(s) ? -s : null);
+      }
+      const mlH = hmlCol ? Number(r[idx[hmlCol]]) : null;
+      const mlA = amlCol ? Number(r[idx[amlCol]]) : null;
+      const totV = totCol ? Number(r[idx[totCol]]) : null;
+      const hsPrice = hSprPriceCol ? Number(r[idx[hSprPriceCol]]) : null;
+      const asPrice = aSprPriceCol ? Number(r[idx[aSprPriceCol]]) : null;
+      const toPrice = totOverPriceCol ? Number(r[idx[totOverPriceCol]]) : null;
+      const tuPrice = totUnderPriceCol ? Number(r[idx[totUnderPriceCol]]) : null;
+      let totClean = (totV===0 ? null : totV);
+      if (Number.isFinite(totClean) && totClean < 100) totClean = null;
+      let hsClean = Number.isFinite(home_spread) ? Number(home_spread) : null;
+      if (hsClean!=null && Math.abs(hsClean) > 60) hsClean = null;
+      let asClean = Number.isFinite(away_spread) ? Number(away_spread) : (hsClean!=null? -hsClean : null);
+      const rec = {
+        home_ml: (mlH===0 ? null : mlH),
+        away_ml: (mlA===0 ? null : mlA),
+        home_spread: hsClean,
+        away_spread: asClean,
+        total: totClean,
+        bookmaker: bookCol ? r[idx[bookCol]] : f.label,
+        home_spread_price: (hsPrice===0 ? null : hsPrice),
+        away_spread_price: (asPrice===0 ? null : asPrice),
+        total_over_price: (toPrice===0 ? null : toPrice),
+        total_under_price: (tuPrice===0 ? null : tuPrice),
+        commence_time: commenceCol ? r[idx[commenceCol]] : null,
+        source: f.label,
+      };
+      const prev = state.oddsByKey.get(key);
+      state.oddsByKey.set(key, mergeOdds(prev, rec));
+    }
+  }
 }
 
 async function loadSchedule() {
@@ -183,81 +250,7 @@ async function maybeInjectPinnedDate(dateStr){
   }catch(e){ /* ignore */ }
 }
 
-async function maybeLoadPredictions(dateStr) {
-  state.predsByKey.clear();
-  const path = `/predictions_${dateStr}.csv`;
-  try {
-    const res = await fetch(path);
-    if (!res.ok) return; // optional
-    const text = await res.text();
-    const rows = parseCSV(text);
-    // Expect columns: date, home_team, visitor_team, home_win_prob, pred_margin, pred_total, ... edges if present
-    const headers = rows[0];
-    const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
-    for (let i=1;i<rows.length;i++){
-      const r = rows[i];
-      const date = r[idx.date] || r[idx['date']];
-      const home = r[idx.home_team];
-      const away = r[idx.visitor_team];
-      if (!date || !home || !away) continue;
-      const key = `${date}|${tricodeFromName(home)}|${tricodeFromName(away)}`;
-      state.predsByKey.set(key, Object.fromEntries(headers.map((h,j)=>[h, r[j]])));
-    }
-  } catch(e) {
-    // ignore missing preds
-  }
-}
-
-async function maybeLoadRecon(dateStr){
-  state.reconByKey.clear();
-  state.reconProps = [];
-  // Games recon
-  const gpath = `/data/processed/recon_games_${dateStr}.csv`;
-  try{
-    const res = await fetch(gpath);
-    if (res.ok){
-      const text = await res.text();
-      const rows = parseCSV(text);
-      const headers = rows[0];
-      const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
-      for (let i=1;i<rows.length;i++){
-        const r = rows[i];
-        const date = r[idx.date];
-        const home = r[idx.home_team];
-        const away = r[idx.visitor_team];
-        if (!date||!home||!away) continue;
-        const key = `${date}|${tricodeFromName(home)}|${tricodeFromName(away)}`;
-        const obj = Object.fromEntries(headers.map((h,j)=>[h, r[j]]));
-        // normalize numerics
-        for (const k of ['home_pts','visitor_pts','actual_margin','total_actual','margin_error','total_error']){
-          if (obj[k]!==undefined) obj[k] = Number(obj[k]);
-        }
-        state.reconByKey.set(key, obj);
-      }
-    }
-  }catch(e){/* ignore */}
-  // Props recon (optional)
-  const ppath = `/data/processed/recon_props_${dateStr}.csv`;
-  try{
-    const res = await fetch(ppath);
-    if (res.ok){
-      const text = await res.text();
-      const rows = parseCSV(text);
-      const headers = rows[0];
-      const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
-      const items = [];
-      for (let i=1;i<rows.length;i++){
-        const r = rows[i];
-        const rec = Object.fromEntries(headers.map((h,j)=>[h, r[j]]));
-        for (const k of ['pred_pts_err','pred_reb_err','pred_ast_err','pred_threes_err','pred_pra_err']){
-          if (rec[k]!==undefined) rec[k] = Number(rec[k]);
-        }
-        items.push(rec);
-      }
-      state.reconProps = items;
-    }
-  }catch(e){/* ignore */}
-}
+// (removed broken duplicate maybeLoadOdds and inline recon parsing)
 
 async function maybeLoadPropsEdges(dateStr){
   state.propsEdges = [];
@@ -282,115 +275,86 @@ async function maybeLoadPropsEdges(dateStr){
   } catch(e){ /* ignore */ }
 }
 
-async function maybeLoadOdds(dateStr){
-  state.oddsByKey.clear();
-  // Prefer freshly fetched Bovada game odds over older consensus files
-  const candidates = [
-    `../data/processed/game_odds_${dateStr}.csv`,
-    `../data/processed/closing_lines_${dateStr}.csv`,
-    `../data/processed/odds_${dateStr}.csv`,
-    `../data/processed/market_${dateStr}.csv`,
-  ];
-  let text=null;
-  for (const p of candidates){
-    try{ const r = await fetch(p); if (r.ok){ text = await r.text(); break; } }catch(e){}
-  }
-  if (!text) return;
-  const rows = parseCSV(text);
-  if (!rows || rows.length<2) return;
-  const headers = rows[0];
-  const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
-  function mergeOdds(base, add){
-    if (!base) return add;
-    const out = { ...base };
-    const isNum = v => v!=='' && v!=null && !Number.isNaN(Number(v));
-    const isSpread = v => isNum(v) && Math.abs(Number(v))<=50;
-    const isTotal = v => isNum(v) && Number(v)>=100 && Number(v)<=330;
-    const pickIf = (k, pred) => {
-      const cur = out[k]; const nxt = add[k];
-      const curOk = pred(cur); const nxtOk = pred(nxt);
-      if (!curOk && nxtOk) out[k] = nxt;
-    };
-    if (!out.bookmaker && add.bookmaker) out.bookmaker = add.bookmaker;
-    pickIf('home_ml', isNum); pickIf('away_ml', isNum);
-    pickIf('home_spread', isSpread); pickIf('away_spread', isSpread);
-    pickIf('total', isTotal);
-    pickIf('home_spread_price', isNum); pickIf('away_spread_price', isNum);
-    pickIf('total_over_price', isNum); pickIf('total_under_price', isNum);
-    if (!out.commence_time && add.commence_time) out.commence_time = add.commence_time;
-    return out;
-  }
-  const pick = (names)=>{ for (const n of names){ if (idx[n]!==undefined) return n; } return null; };
-  const dateCol = pick(['date','game_date','asof_date']);
-  const hCol = pick(['home_team','home_name','home','home_tricode']);
-  const aCol = pick(['visitor_team','away_team','away_name','away','away_tricode']);
-  const hsCol = pick(['home_spread','close_home_spread','spread_home','spread_h','home_line']);
-  const asCol = pick(['away_spread','close_away_spread','spread_away','spread_a']);
-  const spCol = pick(['spread','close_spread']);
-  const totCol = pick(['total','close_total','ou_total','ou_close']);
-  const hmlCol = pick(['home_ml','close_home_ml','ml_home']);
-  const amlCol = pick(['away_ml','close_away_ml','ml_away']);
-  const bookCol = pick(['bookmaker','source','consensus_source']);
-  // Price columns to improve EV calc if present
-  const hSprPriceCol = pick(['home_spread_price','spread_home_price','home_spread_odds','home_spread_ml']);
-  const aSprPriceCol = pick(['away_spread_price','spread_away_price','away_spread_odds','away_spread_ml']);
-  const totOverPriceCol = pick(['total_over_price','ou_over_price','total_over_ml','close_total_over_ml']);
-  const totUnderPriceCol = pick(['total_under_price','ou_under_price','total_under_ml','close_total_under_ml']);
-  for (let i=1;i<rows.length;i++){
-    const r = rows[i];
-    const d = dateCol ? r[idx[dateCol]].slice(0,10) : dateStr;
-    let h = hCol ? r[idx[hCol]] : null; let a = aCol ? r[idx[aCol]] : null;
-    if (!h || !a) continue;
-    const home = tricodeFromName(h);
-    const away = tricodeFromName(a);
-    const key = `${d}|${home}|${away}`;
-    let home_spread = null, away_spread = null;
-    if (hsCol && asCol){
-      home_spread = Number(r[idx[hsCol]]);
-      away_spread = Number(r[idx[asCol]]);
-    } else if (spCol){
-      const s = Number(r[idx[spCol]]);
-      home_spread = s;
-      away_spread = (Number.isFinite(s) ? -s : null);
+// (removed older single-source maybeLoadOdds)
+
+async function maybeLoadPredictions(dateStr){
+  state.predsByKey.clear();
+  const path = `../predictions_${dateStr}.csv`;
+  try{
+    const res = await fetch(path);
+    if (!res.ok) return;
+    const text = await res.text();
+    const rows = parseCSV(text);
+    if (!rows || rows.length < 2) return;
+    const headers = rows[0];
+    const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
+    const pick = (names)=>{ for (const n of names){ if (idx[n]!==undefined) return n; } return null; };
+    const dateCol = pick(['date']);
+    const hCol = pick(['home_team','home']);
+    const aCol = pick(['visitor_team','away']);
+    for (let i=1;i<rows.length;i++){
+      const r = rows[i];
+      const date = dateCol ? String(r[idx[dateCol]]||'').slice(0,10) : dateStr;
+      const home = r[idx[hCol]]; const away = r[idx[aCol]];
+      if (!home || !away) continue;
+      const key = `${date}|${tricodeFromName(home)}|${tricodeFromName(away)}`;
+      const obj = Object.fromEntries(headers.map((h,j)=>[h, r[j]]));
+      for (const k of ['pred_total','pred_margin','home_win_prob','edge_total','edge_spread']){
+        if (obj[k]!==undefined) obj[k] = Number(obj[k]);
+      }
+      state.predsByKey.set(key, obj);
     }
-    // Coerce odds and sanitize zeros (0 means missing/invalid from some feeds)
-    const mlH = hmlCol ? Number(r[idx[hmlCol]]) : null;
-    const mlA = amlCol ? Number(r[idx[amlCol]]) : null;
-    const totV = totCol ? Number(r[idx[totCol]]) : null;
-    const hsPrice = hSprPriceCol ? Number(r[idx[hSprPriceCol]]) : null;
-    const asPrice = aSprPriceCol ? Number(r[idx[aSprPriceCol]]) : null;
-    const toPrice = totOverPriceCol ? Number(r[idx[totOverPriceCol]]) : null;
-    const tuPrice = totUnderPriceCol ? Number(r[idx[totUnderPriceCol]]) : null;
-    // Basic plausibility filters to drop non–full-game junk that may sneak into CSVs
-    const book = bookCol ? String(r[idx[bookCol]] || '').toLowerCase() : '';
-    let totClean = (totV===0 ? null : totV);
-    if (Number.isFinite(totClean) && totClean < 100) {
-      // NBA game totals shouldn't be this low; likely a player/period line -> ignore
-      totClean = null;
+  }catch(_){ /* ignore */ }
+}
+
+async function maybeLoadRecon(dateStr){
+  state.reconByKey.clear();
+  // Game recon
+  const gpath = `/data/processed/recon_games_${dateStr}.csv`;
+  try{
+    const res = await fetch(gpath);
+    if (res.ok){
+      const text = await res.text();
+      const rows = parseCSV(text);
+      const headers = rows[0];
+      const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
+      for (let i=1;i<rows.length;i++){
+        const r = rows[i];
+        const date = r[idx.date];
+        const home = r[idx.home_team];
+        const away = r[idx.visitor_team];
+        if (!date||!home||!away) continue;
+        const key = `${date}|${tricodeFromName(home)}|${tricodeFromName(away)}`;
+        const obj = Object.fromEntries(headers.map((h,j)=>[h, r[j]]));
+        for (const k of ['home_pts','visitor_pts','actual_margin','total_actual','margin_error','total_error']){
+          if (obj[k]!==undefined) obj[k] = Number(obj[k]);
+        }
+        state.reconByKey.set(key, obj);
+      }
     }
-    let hsClean = Number.isFinite(home_spread) ? Number(home_spread) : null;
-    if (hsClean!=null && Math.abs(hsClean) > 60) hsClean = null;
-    let asClean = Number.isFinite(away_spread) ? Number(away_spread) : (hsClean!=null? -hsClean : null);
-    const rec = {
-      home_ml: (mlH===0 ? null : mlH),
-      away_ml: (mlA===0 ? null : mlA),
-      home_spread: hsClean,
-      away_spread: asClean,
-      total: totClean,
-      bookmaker: bookCol ? r[idx[bookCol]] : null,
-      home_spread_price: (hsPrice===0 ? null : hsPrice),
-      away_spread_price: (asPrice===0 ? null : asPrice),
-      total_over_price: (toPrice===0 ? null : toPrice),
-      total_under_price: (tuPrice===0 ? null : tuPrice),
-    };
-    // Skip if all key fields are missing
-    if (rec.home_ml==null && rec.away_ml==null && rec.total==null && rec.home_spread==null) {
-      continue;
+  }catch(_){/* ignore */}
+  // Props recon (optional)
+  state.reconProps = [];
+  const ppath = `/data/processed/recon_props_${dateStr}.csv`;
+  try{
+    const res = await fetch(ppath);
+    if (res.ok){
+      const text = await res.text();
+      const rows = parseCSV(text);
+      const headers = rows[0];
+      const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
+      const items = [];
+      for (let i=1;i<rows.length;i++){
+        const r = rows[i];
+        const rec = Object.fromEntries(headers.map((h,j)=>[h, r[j]]));
+        for (const k of ['pred_pts_err','pred_reb_err','pred_ast_err','pred_threes_err','pred_pra_err']){
+          if (rec[k]!==undefined) rec[k] = Number(rec[k]);
+        }
+        items.push(rec);
+      }
+      state.reconProps = items;
     }
-    // Merge multiple rows per game, preferring most complete data
-    const prev = state.oddsByKey.get(key);
-    state.oddsByKey.set(key, mergeOdds(prev, rec));
-  }
+  }catch(_){/* ignore */}
 }
 
 function parseCSV(text) {
