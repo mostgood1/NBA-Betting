@@ -824,6 +824,12 @@ def api_odds_coverage():
     if not d:
         return jsonify({"error": "missing date"}), 400
     try:
+        # Import team normalizer (maps aliases/abbreviations to full names)
+        try:
+            from nba_betting.teams import normalize_team as _norm_team  # type: ignore
+        except Exception:  # pragma: no cover
+            def _norm_team(x: str) -> str:
+                return str(x or "").strip()
         pred_p = _find_predictions_for_date(d)
         odds_p = _find_game_odds_for_date(d)
         df = pd.read_csv(pred_p) if pred_p else pd.DataFrame()
@@ -835,7 +841,15 @@ def api_odds_coverage():
                 df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
             if not o.empty and "date" in o.columns:
                 o["date"] = pd.to_datetime(o["date"], errors="coerce").dt.date
-            merged = df.merge(o, on=["date","home_team","visitor_team"], how="left", suffixes=("","_odds")) if not o.empty else df
+            # Normalize team names to common canonical form to ensure merge matches
+            for frame in (df, o):
+                if not frame.empty:
+                    if "home_team" in frame.columns:
+                        frame["home_team_norm"] = frame["home_team"].map(lambda x: _norm_team(str(x)))
+                    if "visitor_team" in frame.columns:
+                        frame["visitor_team_norm"] = frame["visitor_team"].map(lambda x: _norm_team(str(x)))
+            on_cols = ["date", "home_team_norm", "visitor_team_norm"] if ("home_team_norm" in df.columns and "home_team_norm" in o.columns) else ["date","home_team","visitor_team"]
+            merged = df.merge(o, left_on=on_cols, right_on=on_cols, how="left", suffixes=("","_odds")) if not o.empty else df
             for _, r in merged.iterrows():
                 rows.append({
                     "home_team": r.get("home_team"),
