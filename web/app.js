@@ -300,6 +300,26 @@ async function maybeLoadOdds(dateStr){
   if (!rows || rows.length<2) return;
   const headers = rows[0];
   const idx = Object.fromEntries(headers.map((h,i)=>[h,i]));
+  function mergeOdds(base, add){
+    if (!base) return add;
+    const out = { ...base };
+    const isNum = v => v!=='' && v!=null && !Number.isNaN(Number(v));
+    const isSpread = v => isNum(v) && Math.abs(Number(v))<=50;
+    const isTotal = v => isNum(v) && Number(v)>=100 && Number(v)<=330;
+    const pickIf = (k, pred) => {
+      const cur = out[k]; const nxt = add[k];
+      const curOk = pred(cur); const nxtOk = pred(nxt);
+      if (!curOk && nxtOk) out[k] = nxt;
+    };
+    if (!out.bookmaker && add.bookmaker) out.bookmaker = add.bookmaker;
+    pickIf('home_ml', isNum); pickIf('away_ml', isNum);
+    pickIf('home_spread', isSpread); pickIf('away_spread', isSpread);
+    pickIf('total', isTotal);
+    pickIf('home_spread_price', isNum); pickIf('away_spread_price', isNum);
+    pickIf('total_over_price', isNum); pickIf('total_under_price', isNum);
+    if (!out.commence_time && add.commence_time) out.commence_time = add.commence_time;
+    return out;
+  }
   const pick = (names)=>{ for (const n of names){ if (idx[n]!==undefined) return n; } return null; };
   const dateCol = pick(['date','game_date','asof_date']);
   const hCol = pick(['home_team','home_name','home','home_tricode']);
@@ -367,7 +387,9 @@ async function maybeLoadOdds(dateStr){
     if (rec.home_ml==null && rec.away_ml==null && rec.total==null && rec.home_spread==null) {
       continue;
     }
-    state.oddsByKey.set(key, rec);
+    // Merge multiple rows per game, preferring most complete data
+    const prev = state.oddsByKey.get(key);
+    state.oddsByKey.set(key, mergeOdds(prev, rec));
   }
 }
 
