@@ -55,8 +55,11 @@ def _safe_get(d: dict, *keys: str, default=None):
 def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str | None = None) -> dict:
     """Extract Moneyline, Spread, and Total from Bovada event JSON for full-game markets.
 
-    - Filters out quarters/halves and alternate-line markets to avoid bad values (e.g., 24.5 total).
-    - If outcome type isn't 'home'/'away', attempts to map by outcome/team description against provided home/away names.
+    Strategy:
+    - Prefer markets in display group "Game Lines" or period indicating a full game.
+    - First pass: keyword-based detection (broad synonyms) for ML/ATS/TOTAL.
+    - Second pass: heuristic fallback by inspecting outcomes shape (e.g., two team outcomes w/o handicap -> ML).
+    - Filters out quarters/halves and alternate-line/team totals to avoid bad values.
 
     Returns dict with keys: home_ml, away_ml, home_spread, away_spread, total, and price fields.
     """
@@ -66,6 +69,26 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
         "home_spread_price": None, "away_spread_price": None,
         "total": None, "total_over_price": None, "total_under_price": None,
     }
+    
+    def _to_american(val) -> int | None:
+        try:
+            s = str(val)
+            if s.startswith("+"):
+                s = s[1:]
+            return int(s)
+        except Exception:
+            return None
+    
+    def _is_full_game(period_desc: str, dg_desc: str) -> bool:
+        if "game lines" in dg_desc:
+            return True
+        pd = period_desc
+        return any(k in pd for k in ["game", "match", "full", "regular time", "regulation"]) or (pd.strip() == "")
+    
+    def _looks_team_total(mtype: str, dg_desc: str) -> bool:
+        mt = mtype
+        return ("team" in mt) or ("team" in dg_desc)
+
     dgs = ev.get("displayGroups", []) or []
     # Flatten markets
     for dg in dgs:
@@ -86,30 +109,33 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                 # Allow totals/spreads named as game types as a fallback
                 if not any(k in mtype for k in [
                     "moneyline", "money line", "match odds", "match result", "to win",
-                    "spread", "point spread", "handicap", "line",
-                    "total", "totals", "total points", "over/under", "o/u"
+                    "head to head", "h2h", "winner", "game winner", "match winner",
+                    "spread", "point spread", "handicap", "line", "against the spread", "ats",
+                    "total", "totals", "total points", "over/under", "o/u", "game total", "points total"
                 ]):
                     continue
             # Moneyline
-            is_ml = any(k in mtype for k in ["moneyline", "money line", "match odds", "match result", "to win"])
+            is_ml = any(k in mtype for k in [
+                "moneyline", "money line", "match odds", "match result", "to win",
+                "head to head", "h2h", "winner", "game winner", "match winner"
+            ])
             if is_ml:
                 for oc in m.get("outcomes", []) or []:
                     typ = (oc.get("type") or "").lower()
                     desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
-                    price = _safe_get(oc, "price", "american")
+                    price = _to_american(_safe_get(oc, "price", "american"))
                     if price is None:
                         continue
-                    try:
-                        price = int(str(price).replace("+", "")) if str(price).startswith("+") else int(price)
-                    except Exception:
-                        continue
                     # Map to home/away using explicit type when present, else by name matching
-                    if typ == "home" or (typ == "" and home_norm and (home_norm in desc)):
+                    if typ in ("home", "h") or (typ == "" and home_norm and (home_norm in desc)):
                         out["home_ml"] = price
-                    elif typ == "away" or (typ == "" and away_norm and (away_norm in desc)):
+                    elif typ in ("away", "a") or (typ == "" and away_norm and (away_norm in desc)):
                         out["away_ml"] = price
             # Point spread
-            elif any(k in mtype for k in ["spread", "point spread", "handicap", "line"]):
+            elif any(k in mtype for k in ["spread", "point spread", "handicap", "line", "against the spread", "ats"]):
+                if _looks_team_total(mtype, dg_desc):
+                    # safeguard: don't confuse team totals w/ spreads
+                    pass
                 # Home/Away outcomes with handicap
                 for oc in m.get("outcomes", []) or []:
                     typ = (oc.get("type") or "").lower()
@@ -126,20 +152,19 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     spr_price = None
                     try:
                         s = price_obj.get("american")
-                        if s is not None:
-                            spr_price = int(str(s).replace("+", "")) if str(s).startswith("+") else int(s)
+                        spr_price = _to_american(s) if s is not None else None
                     except Exception:
                         spr_price = None
-                    if typ == "home" or (typ == "" and home_norm and (home_norm in desc)):
+                    if typ in ("home", "h") or (typ == "" and home_norm and (home_norm in desc)):
                         out["home_spread"] = hval
                         if spr_price is not None:
                             out["home_spread_price"] = spr_price
-                    elif typ == "away" or (typ == "" and away_norm and (away_norm in desc)):
+                    elif typ in ("away", "a") or (typ == "" and away_norm and (away_norm in desc)):
                         out["away_spread"] = hval
                         if spr_price is not None:
                             out["away_spread_price"] = spr_price
             # Game Total (exclude team totals and player/prop totals)
-            elif any(k in mtype for k in ["total", "totals", "total points", "over/under", "o/u"]) and not any(k in mtype for k in ["team", "player", "race", "alt"]):
+            elif any(k in mtype for k in ["total", "totals", "total points", "over/under", "o/u", "game total", "points total"]) and not any(k in mtype for k in ["team", "player", "race", "alt"]):
                 # Total outcomes with over/under; handicap is the total line
                 for oc in m.get("outcomes", []) or []:
                     price_obj = oc.get("price") or {}
@@ -165,13 +190,77 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     try:
                         s = price_obj.get("american")
                         if s is not None:
-                            pr = int(str(s).replace("+", "")) if str(s).startswith("+") else int(s)
+                            pr = _to_american(s)
                             if "over" in typ:
                                 out["total_over_price"] = pr
                             elif "under" in typ:
                                 out["total_under_price"] = pr
                     except Exception:
                         pass
+            # Heuristic fallbacks when keywords are missing
+            else:
+                if not _is_full_game(period_desc, dg_desc):
+                    continue
+                outs = list(m.get("outcomes", []) or [])
+                if not outs:
+                    continue
+                # Detect TOTAL: outcomes mention over/under and handicap in plausible range
+                types_str = " ".join([(o.get("type") or o.get("description") or "").lower() for o in outs])
+                if any(k in types_str for k in ["over", "under"]) and not _looks_team_total(mtype, dg_desc):
+                    for oc in outs:
+                        price_obj = oc.get("price") or {}
+                        handicap = _safe_get(oc, "price", "handicap") or oc.get("handicap")
+                        try:
+                            hval = float(handicap) if handicap is not None else None
+                        except Exception:
+                            hval = None
+                        if hval is None or hval < 150 or hval > 330:
+                            continue
+                        out["total"] = hval
+                        pr = _to_american(price_obj.get("american"))
+                        t = (oc.get("type") or oc.get("description") or "").lower()
+                        if pr is not None:
+                            if "over" in t:
+                                out["total_over_price"] = pr
+                            elif "under" in t:
+                                out["total_under_price"] = pr
+                # Detect SPREAD: outcomes for both teams with handicap within range
+                if out["home_spread"] is None or out["away_spread"] is None:
+                    for oc in outs:
+                        price_obj = oc.get("price") or {}
+                        handicap = _safe_get(oc, "price", "handicap") or oc.get("handicap")
+                        try:
+                            hval = float(handicap) if handicap is not None else None
+                        except Exception:
+                            hval = None
+                        if hval is None or abs(hval) > 50:
+                            continue
+                        typ = (oc.get("type") or "").lower()
+                        desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
+                        pr = _to_american((price_obj or {}).get("american"))
+                        if (typ in ("home", "h")) or (home_norm and home_norm in desc):
+                            out["home_spread"] = hval
+                            if pr is not None:
+                                out["home_spread_price"] = pr
+                        elif (typ in ("away", "a")) or (away_norm and away_norm in desc):
+                            out["away_spread"] = hval
+                            if pr is not None:
+                                out["away_spread_price"] = pr
+                # Detect ML: two team outcomes without handicap values
+                if out["home_ml"] is None or out["away_ml"] is None:
+                    # Ensure most outcomes have no handicap
+                    no_hcap = [o for o in outs if _safe_get(o, "price", "handicap") is None and o.get("handicap") is None]
+                    if len(no_hcap) >= 2:
+                        for oc in no_hcap:
+                            typ = (oc.get("type") or "").lower()
+                            desc = str(oc.get("description") or oc.get("name") or oc.get("competitor") or "").strip().lower()
+                            pr = _to_american(_safe_get(oc, "price", "american"))
+                            if pr is None:
+                                continue
+                            if (typ in ("home", "h")) or (home_norm and home_norm in desc):
+                                out["home_ml"] = pr
+                            elif (typ in ("away", "a")) or (away_norm and away_norm in desc):
+                                out["away_ml"] = pr
     return out
 
 
