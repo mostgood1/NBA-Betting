@@ -149,8 +149,11 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     # Only set total when period indicates a game/match or in a group named game lines
                     if ("game lines" not in dg_desc) and not any(k in period_desc for k in ["game", "match", "full", "regular"]):
                         continue
-                    # Sanity: ignore implausible NBA full-game totals (likely quarter/team totals slipped through)
-                    if hval < 100 or hval > 330:
+                    # Exclude team totals by display group name
+                    if "team" in dg_desc:
+                        continue
+                    # Sanity: ignore implausible NBA full-game totals (likely half/quarter/team totals slipped through)
+                    if hval < 150 or hval > 330:
                         continue
                     out["total"] = hval
                     # capture over/under prices
@@ -308,7 +311,7 @@ def fetch_bovada_odds_current(date: datetime | str, verbose: bool = False) -> pd
     def _ok_total(x):
         try:
             xv = float(x)
-            return xv if 100 <= xv <= 330 else None
+            return xv if 150 <= xv <= 330 else None
         except Exception:
             return None
     df["total"] = df["total"].apply(_ok_total)
