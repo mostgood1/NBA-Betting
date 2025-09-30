@@ -91,9 +91,14 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
 
     dgs = ev.get("displayGroups", []) or []
     # Candidates collected across markets, then reduced to best pick
-    ml_cands: list[dict] = []  # each: {"home": int, "away": int}
-    spread_cands: dict[float, dict] = {}  # abs(handicap) -> {"home_h": float, "away_h": float, "home_price": int, "away_price": int}
-    total_cands: dict[float, dict] = {}   # total -> {"over_price": int, "under_price": int}
+    def _dg_priority(desc: str) -> int:
+        d = desc.lower()
+        if ("game lines" in d) or ("game" in d and "lines" in d) or ("main" in d):
+            return 0
+        return 1
+    ml_cands: list[dict] = []  # each: {"home": int, "away": int, "prio": int}
+    spread_cands: dict[float, dict] = {}  # abs(handicap) -> {"home_h": float, "away_h": float, "home_price": int, "away_price": int, "prio": int}
+    total_cands: dict[float, dict] = {}   # total -> {"over_price": int, "under_price": int, "prio": int}
     # Flatten markets
     for dg in dgs:
         dg_desc = str(dg.get("description") or dg.get("name") or "").lower()
@@ -136,6 +141,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     elif typ in ("away", "a") or (typ == "" and away_norm and (away_norm in desc)):
                         temp["away"] = price
                 if temp["home"] is not None and temp["away"] is not None:
+                    temp["prio"] = _dg_priority(dg_desc)
                     ml_cands.append(temp)
             # Point spread
             elif any(k in mtype for k in ["spread", "point spread", "handicap", "against the spread", "ats"]) and ("player" not in mtype):
@@ -162,7 +168,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     except Exception:
                         spr_price = None
                     key = round(abs(hval), 1)
-                    rec = spread_cands.setdefault(key, {"home_h": None, "away_h": None, "home_price": None, "away_price": None})
+                    rec = spread_cands.setdefault(key, {"home_h": None, "away_h": None, "home_price": None, "away_price": None, "prio": _dg_priority(dg_desc)})
                     if typ in ("home", "h") or (typ == "" and home_norm and (home_norm in desc)):
                         rec["home_h"] = hval
                         if spr_price is not None:
@@ -193,7 +199,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     # Sanity: ignore implausible NBA full-game totals (likely half/quarter/team totals slipped through)
                     if hval < 150 or hval > 330:
                         continue
-                    rec = total_cands.setdefault(round(hval,1), {"over_price": None, "under_price": None})
+                    rec = total_cands.setdefault(round(hval,1), {"over_price": None, "under_price": None, "prio": _dg_priority(dg_desc)})
                     # capture over/under prices
                     try:
                         s = price_obj.get("american")
@@ -224,7 +230,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                             hval = None
                         if hval is None or hval < 150 or hval > 330:
                             continue
-                        rec = total_cands.setdefault(round(hval,1), {"over_price": None, "under_price": None})
+                        rec = total_cands.setdefault(round(hval,1), {"over_price": None, "under_price": None, "prio": _dg_priority(dg_desc)})
                         pr = _to_american(price_obj.get("american"))
                         t = (oc.get("type") or oc.get("description") or "").lower()
                         if pr is not None:
@@ -276,8 +282,8 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                             ml_cands.append(temp)
     # Choose best ML candidate (first good one)
     if ml_cands:
-        # Prefer the one with smaller absolute prices (rough proxy to avoid props with extreme prices)
-        ml_cands.sort(key=lambda d: (abs(d.get("home") or 0) + abs(d.get("away") or 0)))
+        # Prefer display groups that look like main/game lines first
+        ml_cands.sort(key=lambda d: (d.get("prio", 1), ))
         out["home_ml"] = ml_cands[0].get("home")
         out["away_ml"] = ml_cands[0].get("away")
     # Choose best spread candidate: smallest abs handicap then juice closeness to -110
@@ -286,7 +292,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
             hp = rec.get("home_price"); ap = rec.get("away_price")
             # distance from -110 on each side (use 200 if missing)
             d = (abs((abs(hp) if hp is not None else 200) - 110) + abs((abs(ap) if ap is not None else 200) - 110))
-            return (k, d)
+            return (rec.get("prio", 1), d, abs(k - (sum(spread_cands.keys())/max(len(spread_cands),1))))
         best_key = sorted(((k, v) for k, v in spread_cands.items() if v.get("home_h") is not None and v.get("away_h") is not None), key=lambda kv: spread_score(kv[0], kv[1]))
         if best_key:
             k, rec = best_key[0]
@@ -298,16 +304,15 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
     if total_cands:
         def total_score(line: float, rec: dict) -> tuple:
             op = rec.get("over_price"); up = rec.get("under_price")
-            d = (abs((abs(op) if op is not None else 200) - 110) + abs((abs(up) if up is not None else 200) - 110))
+            d = (abs((abs(op) if op is not None else 110) - 110) + abs((abs(up) if up is not None else 110) - 110))
             # prefer mid-range totals as tiebreaker (e.g., 210-240 typical)
             bias = abs(line - 225.0)
-            return (d, bias)
-        good = [(ln, rc) for ln, rc in total_cands.items() if rc.get("over_price") is not None and rc.get("under_price") is not None]
-        if good:
-            ln, rc = sorted(good, key=lambda it: total_score(it[0], it[1]))[0]
-            out["total"] = ln
-            out["total_over_price"] = rc.get("over_price")
-            out["total_under_price"] = rc.get("under_price")
+            return (rec.get("prio", 1), d, bias)
+        # Accept lines even if one price missing; pick best by prio then juice closeness
+        ln, rc = sorted(total_cands.items(), key=lambda it: total_score(it[0], it[1]))[0]
+        out["total"] = ln
+        out["total_over_price"] = rc.get("over_price")
+        out["total_under_price"] = rc.get("under_price")
     return out
 
 
