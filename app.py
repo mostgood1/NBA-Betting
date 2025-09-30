@@ -12,6 +12,7 @@ import shlex
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+import subprocess as _subp
 
 import pandas as pd
 import numpy as np
@@ -117,6 +118,24 @@ def health():
         return jsonify({"status": "ok", "have_index": bool(exists)}), 200
     except Exception as e:  # noqa: BLE001
         return jsonify({"status": "error", "error": str(e)}), 500
+
+
+@app.route("/api/version")
+def api_version():
+    """Return app version info (git SHA, branch) to verify deploy state."""
+    try:
+        sha = _subp.check_output(["git", "rev-parse", "HEAD"], cwd=str(BASE_DIR), text=True).strip()
+    except Exception:
+        sha = None
+    try:
+        branch = _subp.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(BASE_DIR), text=True).strip()
+    except Exception:
+        branch = None
+    return jsonify({
+        "sha": sha,
+        "branch": branch,
+        "time": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+    })
 
 
 @app.route("/favicon.ico")

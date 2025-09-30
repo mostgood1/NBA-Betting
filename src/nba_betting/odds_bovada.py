@@ -194,7 +194,7 @@ def _walk_event_lists(payload: Any):
         return
 
 
-def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataFrame:
+def fetch_bovada_odds_current(date: datetime | str, verbose: bool = False) -> pd.DataFrame:
     """Fetch current game odds from Bovada for events on the given calendar date (UTC date match).
 
     Returns a normalized DataFrame with columns:
@@ -210,7 +210,8 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
         et = None
     # Important: interpret the requested date as the ET calendar day provided by the caller,
     # not as UTC midnight converted to ET (which can underflow to the prior day).
-    target_et = pd.to_datetime(date).date()
+    # Accept a string YYYY-MM-DD and use as-is (no tz involved)
+    target_et = pd.to_datetime(str(date)).date()
     rows: list[dict] = []
     payloads = []
     for url in ENDPOINTS:
@@ -284,7 +285,7 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
     return pd.DataFrame(rows)
 
 
-def probe_bovada(date: datetime, verbose: bool = False) -> dict:
+def probe_bovada(date: datetime | str, verbose: bool = False) -> dict:
     """Probe Bovada endpoints and report counts for the given date (US/Eastern match).
 
     Returns a dict with target_date and a list of results per URL including HTTP status and event counts.
@@ -298,7 +299,7 @@ def probe_bovada(date: datetime, verbose: bool = False) -> dict:
     else:
         et = None
     # Interpret requested date as the ET calendar day (no UTC shift)
-    target_et = pd.to_datetime(date).date()
+    target_et = pd.to_datetime(str(date)).date()
     out = {"target_date": str(target_et), "results": []}
     for url in ENDPOINTS:
         ent = {"url": url, "status": None, "events_total": 0, "events_on_date": 0, "error": None}
@@ -309,6 +310,7 @@ def probe_bovada(date: datetime, verbose: bool = False) -> dict:
                 payload = r.json()
                 total = 0
                 on_date = 0
+                first_ts = None
                 for events in _walk_event_lists(payload):
                     lst = list(events or [])
                     total += len(lst)
@@ -317,6 +319,8 @@ def probe_bovada(date: datetime, verbose: bool = False) -> dict:
                             dt = _to_dt_utc(ev.get("startTime"))
                             if dt is None:
                                 continue
+                            if first_ts is None:
+                                first_ts = dt.isoformat()
                             try:
                                 ct = dt.tz_convert(et).date() if et is not None else dt.date()
                             except Exception:
@@ -327,6 +331,7 @@ def probe_bovada(date: datetime, verbose: bool = False) -> dict:
                             pass
                 ent["events_total"] = total
                 ent["events_on_date"] = on_date
+                ent["first_event_ts_utc"] = first_ts
             else:
                 ent["error"] = f"http {r.status_code}"
         except Exception as e:
