@@ -953,12 +953,13 @@ def api_cron_refresh_bovada():
         d = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
     if _fetch_bovada_odds_current is None:
         return jsonify({"error": "bovada fetcher not available"}), 500
+    # Pass date string directly; function treats as ET calendar date
     try:
-        dt = pd.to_datetime(d).date()
+        _ = pd.to_datetime(d)
     except Exception:
         return jsonify({"error": "invalid date"}), 400
     try:
-        df = _fetch_bovada_odds_current(pd.to_datetime(dt))
+        df = _fetch_bovada_odds_current(d)
         rows = 0 if df is None else len(df)
         out = BASE_DIR / "data" / "processed" / f"game_odds_{d}.csv"
         used_fallback = False

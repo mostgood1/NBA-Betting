@@ -208,14 +208,9 @@ def fetch_bovada_odds_current(date: datetime, verbose: bool = False) -> pd.DataF
             et = None
     else:
         et = None
-    ts = pd.to_datetime(date, utc=True)
-    if et is not None:
-        try:
-            target_et = ts.tz_convert(et).date()
-        except Exception:
-            target_et = ts.date()
-    else:
-        target_et = ts.date()
+    # Important: interpret the requested date as the ET calendar day provided by the caller,
+    # not as UTC midnight converted to ET (which can underflow to the prior day).
+    target_et = pd.to_datetime(date).date()
     rows: list[dict] = []
     payloads = []
     for url in ENDPOINTS:
@@ -302,14 +297,8 @@ def probe_bovada(date: datetime, verbose: bool = False) -> dict:
             et = None
     else:
         et = None
-    ts = pd.to_datetime(date, utc=True)
-    if et is not None:
-        try:
-            target_et = ts.tz_convert(et).date()
-        except Exception:
-            target_et = ts.date()
-    else:
-        target_et = ts.date()
+    # Interpret requested date as the ET calendar day (no UTC shift)
+    target_et = pd.to_datetime(date).date()
     out = {"target_date": str(target_et), "results": []}
     for url in ENDPOINTS:
         ent = {"url": url, "status": None, "events_total": 0, "events_on_date": 0, "error": None}
