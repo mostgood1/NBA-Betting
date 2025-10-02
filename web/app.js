@@ -54,12 +54,45 @@ function teamLineHTML(tri){
   const team = state.teams[t] || { tricode:t, name:t };
   const svg = teamLogoUrl(t);
   const png = svg.replace('.svg', '.png');
-  const cdnList = [png];
+  // Build a prioritized fallback list of remote CDN logo URLs (Render may not ship local assets)
+  const cdnList = (function(){
+    const id = (state.teams[t] && state.teams[t].id) ? String(state.teams[t].id) : null;
+    const urls = [];
+    if (id){
+      urls.push(
+        `https://cdn.nba.com/logos/nba/${id}/primary/L/logo.svg`,
+        `https://cdn.nba.com/logos/nba/${id}/primary/L/logo.png`,
+        `https://cdn.nba.com/logos/nba/${id}/global/L/logo.svg`,
+        `https://cdn.nba.com/logos/nba/${id}/global/L/logo.png`,
+      );
+    }
+    return urls;
+  })();
   return `
     <div class="team-line-inner">
       <img src="${svg}" alt="${t}" class="logo" data-tri="${t}" data-cdn="${cdnList.join('|')}" onerror="handleLogoError(this)"/>
       <span class="name">${team.name || t}</span>
     </div>`;
+}
+
+// Generate a simple inline SVG badge fallback (used if all logo sources fail)
+function svgBadgeDataUrl(tri){
+  try{
+    const T = String(tri||'').toUpperCase();
+    const bg = '#1E293B'; // slate-800
+    const fg = '#FFFFFF';
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect x="0" y="0" width="48" height="48" rx="8" ry="8" fill="${bg}" />
+  <text x="24" y="29" text-anchor="middle" font-family="Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif" font-size="16" font-weight="700" fill="${fg}">${T}</text>
+  <title>${T}</title>
+  <desc>Fallback badge for ${T}</desc>
+  <style>text{dominant-baseline:middle;}</style>
+</svg>`;
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+  }catch(_){
+    return 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect width="48" height="48" fill="#1E293B"/></svg>');
+  }
 }
 
 async function loadTeams(){
