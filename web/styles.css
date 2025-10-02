@@ -1,6 +1,6 @@
 /* NHL-style theme and components for pixel-perfect card parity */
 * { box-sizing: border-box; }
-body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; background: #0b1020; color: #e8eaf6; line-height: 1.35; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin: 0; padding: 0; background: #0b1020; color: #e8eaf6; line-height: 1.35; }
 header { background: #121a33; padding: 12px 0; }
 header .header-inner { display: flex; align-items: center; gap: 12px; padding: 0 16px; }
 header h1 { margin: 0 12px 0 0; font-size: 20px; }
@@ -32,6 +32,8 @@ header .last-updated { margin-left: auto; color: #9fb0ff; font-size: 12px; opaci
 .team .team-line { display: flex; align-items: center; }
 .team .name { font-size: 20px; font-weight: 700; }
 .team-logo { height: 36px; vertical-align: middle; margin-right: 8px; }
+/* Ensure logos rendered by app.js (.team-line img.logo) are sized consistently */
+.team-line img.logo { height: 36px; width: auto; vertical-align: middle; margin-right: 8px; object-fit: contain; image-rendering: auto; }
 .score-block { display: grid; gap: 2px; justify-items: end; }
 .live-score { font-size: 24px; font-weight: 800; letter-spacing: 0.3px; }
 .sub { font-size: 12px; color: #9fb0ff; }
@@ -80,8 +82,37 @@ header .last-updated { margin-left: auto; color: #9fb0ff; font-size: 12px; opaci
 	.proj-score { font-size: 12px; }
 	.team .name { font-size: 18px; }
 	.team-logo { height: 32px; }
+	.team-line img.logo { height: 32px; }
 }
 
 /* Footer */
 footer { background: transparent; border-top: 1px solid #25316a; margin-top: 8px; }
 .footer-meta { padding: 8px 16px; color: #9fb0ff; font-size: 12px; opacity: 0.9; }
+
+/* Secondary pages header/nav (NHL parity) */
+.site-header { background: #121a33; border-bottom: 1px solid #1f2a5a; padding: 12px 0; }
+.site-header .container { display: grid; grid-template-columns: 1fr; gap: 8px; align-items: center; }
+.site-header h1 { margin: 0; font-size: 20px; color: #e8eaf6; }
+.site-nav { display: flex; gap: 12px; flex-wrap: wrap; }
+.site-nav a { color: #cfe0ff; text-decoration: none; padding: 4px 6px; border-radius: 6px; border: 1px solid transparent; }
+.site-nav a[aria-current="page"], .site-nav a:hover { background: #0f1530; border-color: #25316a; color: #ffffff; }
+.controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.controls input, .controls select { background: #0f1530; color: #e8eaf6; border: 1px solid #25316a; border-radius: 6px; padding: 6px 8px; }
+.summary { margin: 12px 0; color: #cfe0ff; font-size: 14px; }
+.table-wrap { overflow-x: auto; background: #0f1530; border: 1px solid #25316a; border-radius: 10px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td { padding: 8px 10px; border-bottom: 1px solid #25316a; }
+.data-table thead th { text-align: left; background: #141b3a; color: #d5dbff; position: sticky; top: 0; z-index: 1; }
+.data-table tbody tr:nth-child(odd) { background: #121a33; }
+.data-table tbody tr:nth-child(even) { background: #101735; }
+
+/* Generic badges and subtle text used in JS-rendered cards */
+.badge { display: inline-block; padding: 2px 6px; border-radius: 8px; font-size: 11px; font-weight: 700; border: 1px solid #25316a; background: #0f1530; color: #d5dbff; }
+.badge.badge-final { background: #0f2d1b; border-color: #1e7a45; color: #a7f3c6; }
+.badge.good { background: #0f2d1b; border-color: #1e7a45; color: #a7f3c6; }
+.badge.ok { background: #2a2310; border-color: #6a5a1f; color: #ffeaa7; }
+.badge.bad { background: #3a1212; border-color: #7a1e1e; color: #ffb7b7; }
+.subtle { color: #9fb0ff; font-size: 12px; opacity: 0.95; }
+
+/* A11y utility */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }

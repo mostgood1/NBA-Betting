@@ -83,6 +83,23 @@ def data_static(path: str):
     data_dir = BASE_DIR / "data"
     return send_from_directory(str(data_dir), path)
 
+# Friendly routes to mirror NHL site paths (serve static HTML files)
+@app.route("/recommendations")
+def route_recommendations():
+    return send_from_directory(str(WEB_DIR), "recommendations.html")
+
+@app.route("/props")
+def route_props():
+    return send_from_directory(str(WEB_DIR), "props.html")
+
+@app.route("/reconciliation")
+def route_reconciliation():
+    return send_from_directory(str(WEB_DIR), "reconciliation.html")
+
+@app.route("/odds-coverage")
+def route_odds_coverage():
+    return send_from_directory(str(WEB_DIR), "odds_coverage.html")
+
 
 @app.route("/predictions_<date>.csv")
 def serve_predictions_csv(date: str):
@@ -1356,6 +1373,77 @@ def api_cron_daily_update():
     t = threading.Thread(target=_daily_update_job, args=(do_push,), daemon=True)
     t.start()
     return jsonify({"status": "started", "push": do_push, "started_at": datetime.utcnow().isoformat()}), 202
+
+
+@app.route("/api/cron/run-all", methods=["POST", "GET"])
+def api_cron_run_all():
+    """Composite daily cron mirroring NHL behavior: predict, fetch odds, reconcile, props actuals/edges.
+
+    Steps (best-effort, continue on failures):
+      1) Predict for today's slate
+      2) Refresh Bovada odds (or fallback to any available odds file)
+      3) Reconcile yesterday's games (to post finals)
+      4) Props actuals upsert for yesterday
+      5) Compute props edges for today (if supported)
+    """
+    if not _cron_auth_ok(request):
+        return jsonify({"error": "unauthorized"}), 401
+    today = datetime.utcnow().date()
+    yesterday = today - timedelta(days=1)
+    d_today = request.args.get("date") or today.isoformat()
+    d_yest = request.args.get("yesterday") or yesterday.isoformat()
+    push = (str(request.args.get("push", "0")).lower() in {"1","true","yes"})
+    # Choose python exe
+    py = os.environ.get("PYTHON", (os.environ.get("VIRTUAL_ENV") or "") + "/bin/python")
+    if not py or not Path(str(py)).exists():
+        py_win = (Path(os.environ.get("VIRTUAL_ENV") or "") / "Scripts" / "python.exe")
+        py = str(py_win) if py_win.exists() else "python"
+    env = {"PYTHONPATH": str(SRC_DIR)}
+    logdir = _ensure_logs_dir(); stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    log_file = logdir / f"web_daily_update_{stamp}.log"
+    results: Dict[str, Any] = {"date": d_today, "yesterday": d_yest, "log_file": str(log_file)}
+    try:
+        # 1) predict-date today
+        rc1 = _run_to_file([str(py), "-m", "nba_betting.cli", "predict-date", "--date", d_today], log_file, cwd=BASE_DIR, env=env)
+        results["predict_date"] = int(rc1)
+        # 2) refresh-bovada for today (HTTP to our own endpoint, to centralize logic/meta)
+        try:
+            import requests as _rq
+            token = os.environ.get("CRON_TOKEN")
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
+            r = _rq.get(f"http://127.0.0.1:5000/api/cron/refresh-bovada?date={d_today}", headers=headers, timeout=60)
+            results["refresh_bovada"] = (r.status_code, r.text[:200])
+        except Exception as e:
+            results["refresh_bovada_error"] = str(e)
+        # 3) reconcile-games for yesterday
+        try:
+            import requests as _rq
+            token = os.environ.get("CRON_TOKEN")
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
+            r = _rq.get(f"http://127.0.0.1:5000/api/cron/reconcile-games?date={d_yest}", headers=headers, timeout=60)
+            results["reconcile_games"] = (r.status_code, r.text[:200])
+        except Exception as e:
+            results["reconcile_games_error"] = str(e)
+        # 4) props actuals upsert for yesterday via CLI
+        try:
+            rc4 = _run_to_file([str(py), "-m", "nba_betting.cli", "props-actuals", "--date", d_yest], log_file, cwd=BASE_DIR, env=env)
+            results["props_actuals"] = int(rc4)
+        except Exception as e:
+            results["props_actuals_error"] = str(e)
+        # 5) compute props edges for today via CLI if available
+        try:
+            rc5 = _run_to_file([str(py), "-m", "nba_betting.cli", "props-edges", "--date", d_today], log_file, cwd=BASE_DIR, env=env)
+            results["props_edges"] = int(rc5)
+        except Exception as e:
+            results["props_edges_error"] = str(e)
+        if push:
+            ok, detail = _git_commit_and_push(msg=f"daily-run-all {d_today}")
+            results["pushed"] = bool(ok)
+            results["push_detail"] = detail
+        _cron_meta_update("run_all", {"date": d_today, "yesterday": d_yest, "log_file": str(log_file)})
+        return jsonify(results)
+    except Exception as e:
+        return jsonify({"error": str(e), **results}), 500
 
 
 @app.route("/api/cron/config")

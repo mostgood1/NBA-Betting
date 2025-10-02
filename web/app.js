@@ -125,10 +125,22 @@ async function maybeLoadOdds(dateStr){
     const hmlCol = pick(['home_ml','close_home_ml','ml_home']);
     const amlCol = pick(['away_ml','close_away_ml','ml_away']);
     const bookCol = pick(['bookmaker','source','consensus_source']);
-    const hSprPriceCol = pick(['home_spread_price','spread_home_price','home_spread_odds','home_spread_ml']);
-    const aSprPriceCol = pick(['away_spread_price','spread_away_price','away_spread_odds','away_spread_ml']);
-    const totOverPriceCol = pick(['total_over_price','ou_over_price','total_over_ml','close_total_over_ml']);
-    const totUnderPriceCol = pick(['total_under_price','ou_under_price','total_under_ml','close_total_under_ml']);
+    const hSprPriceCol = pick([
+      'home_spread_price','spread_home_price','home_spread_odds','home_spread_ml',
+      'home_handicap_price','home_handicap_odds'
+    ]);
+    const aSprPriceCol = pick([
+      'away_spread_price','spread_away_price','away_spread_odds','away_spread_ml',
+      'away_handicap_price','away_handicap_odds'
+    ]);
+    const totOverPriceCol = pick([
+      'total_over_price','ou_over_price','total_over_ml','close_total_over_ml',
+      'over_price','over_odds','ou_over_odds','over_ml'
+    ]);
+    const totUnderPriceCol = pick([
+      'total_under_price','ou_under_price','total_under_ml','close_total_under_ml',
+      'under_price','under_odds','ou_under_odds','under_ml'
+    ]);
     const commenceCol = pick(['commence_time','start_time','game_time']);
     for (let i=1;i<rows.length;i++){
       const r = rows[i];
@@ -210,12 +222,12 @@ async function loadSchedule() {
   state.scheduleDates = Array.from(schedDateSet).sort();
 }
 
-// If the pinned date isn't present in the schedule, synthesize a slate from predictions_{date}.csv
+// If the pinned date isn't present in the schedule, synthesize a slate from data/processed/predictions_{date}.csv
 async function maybeInjectPinnedDate(dateStr){
   try{
     if (!dateStr) return;
     if (state.byDate.has(dateStr)) return; // already present
-    const path = `../predictions_${dateStr}.csv`;
+    const path = `/data/processed/predictions_${dateStr}.csv?v=${Date.now()}`;
     const res = await fetch(path);
     if (!res.ok) return; // no predictions to seed from
     const text = await res.text();
@@ -279,7 +291,7 @@ async function maybeLoadPropsEdges(dateStr){
 
 async function maybeLoadPredictions(dateStr){
   state.predsByKey.clear();
-  const path = `../predictions_${dateStr}.csv`;
+  const path = `/data/processed/predictions_${dateStr}.csv?v=${Date.now()}`;
   try{
     const res = await fetch(path);
     if (!res.ok) return;
@@ -310,7 +322,7 @@ async function maybeLoadPredictions(dateStr){
 async function maybeLoadRecon(dateStr){
   state.reconByKey.clear();
   // Game recon
-  const gpath = `/data/processed/recon_games_${dateStr}.csv`;
+  const gpath = `/data/processed/recon_games_${dateStr}.csv?v=${Date.now()}`;
   try{
     const res = await fetch(gpath);
     if (res.ok){
@@ -335,7 +347,7 @@ async function maybeLoadRecon(dateStr){
   }catch(_){/* ignore */}
   // Props recon (optional)
   state.reconProps = [];
-  const ppath = `/data/processed/recon_props_${dateStr}.csv`;
+  const ppath = `/data/processed/recon_props_${dateStr}.csv?v=${Date.now()}`;
   try{
     const res = await fetch(ppath);
     if (res.ok){
@@ -527,7 +539,8 @@ function renderDate(dateStr){
     const key = `${dateStr}|${home}|${away}`; // note schedule is away@home
     const pred = state.predsByKey.get(key);
   const recs = recChips(pred);
-  const recon = showResults ? state.reconByKey.get(key) : null;
+  // Always load recon to determine final status/score; Results toggle governs extra details only
+  const recon = state.reconByKey.get(key);
   const finals = showResults ? resultChips(recon) : '';
     // Projected / Actual scores
     let projHome=null, projAway=null;
@@ -538,8 +551,8 @@ function renderDate(dateStr){
         projAway = (T - M) / 2;
       }
     }
-  const actualHome = recon && Number.isFinite(recon.home_pts) ? recon.home_pts : null;
-  const actualAway = recon && Number.isFinite(recon.visitor_pts) ? recon.visitor_pts : null;
+  const actualHome = recon && Number.isFinite(recon.home_pts) ? Number(recon.home_pts) : null;
+  const actualAway = recon && Number.isFinite(recon.visitor_pts) ? Number(recon.visitor_pts) : null;
   const totalModel = pred && Number.isFinite(Number(pred.pred_total)) ? Number(pred.pred_total) : null;
   const totalActual = (actualHome!=null && actualAway!=null) ? (actualHome + actualAway) : null;
   const diffLine = (totalModel!=null && totalActual!=null) ? `Diff: ${(totalActual - totalModel).toFixed(2)}` : '';
@@ -560,7 +573,7 @@ function renderDate(dateStr){
     if (odds){
       const hML = odds.home_ml, aML = odds.away_ml;
       const hImp = impliedProbAmerican(hML); const aImp = impliedProbAmerican(aML);
-      const mlLine = `Moneyline (Away / Home) ${fmtOddsAmerican(aML)} / ${fmtOddsAmerican(hML)}`;
+  const mlLine = `Moneyline (Away / Home) ${fmtOddsAmerican(aML)} / ${fmtOddsAmerican(hML)}`;
       const impLine = (hImp!=null && aImp!=null) ? `Implied Win Prob (Away / Home) ${(aImp*100).toFixed(1)}% / ${(hImp*100).toFixed(1)}%` : '';
       const spr = Number(odds.home_spread);
       const tot = Number(odds.total);
@@ -703,10 +716,10 @@ function renderDate(dateStr){
     }catch(e){ /* ignore EV calc errors */ }
   const tv = g.broadcasters_national || '';
   const venue = venueText;
-    // Determine final result class when results are shown
-    let w = 0, l = 0, psh = 0;
-    const isFinal = showResults && (actualHome!=null && actualAway!=null);
-    if (isFinal) {
+  // Determine final result class when results are shown
+  let w = 0, l = 0, psh = 0;
+  let isFinal = (actualHome!=null && actualAway!=null);
+  if (isFinal) {
       // Moneyline
       if (pred && pred.home_win_prob!=null) {
         const pHome = Number(pred.home_win_prob);
@@ -737,8 +750,8 @@ function renderDate(dateStr){
         if (actualATS === 'Push') psh++; else if (predATS === actualATS) w++; else l++;
       }
     }
-    let resultClass = 'final-neutral';
-    if (isFinal) {
+  let resultClass = 'final-neutral';
+  if (isFinal) {
       if (w > 0 && l === 0) resultClass = 'final-all-win';
       else if (l > 0 && w === 0 && psh === 0) resultClass = 'final-all-loss';
       else if (w > 0 && l > 0) resultClass = 'final-mixed';
@@ -748,13 +761,18 @@ function renderDate(dateStr){
   node.className = `card ${resultClass}`;
   if (hasAnyOdds) node.setAttribute('data-has-odds','1'); else node.setAttribute('data-has-odds','0');
     // Build detailed card body aligned to NHL example
+  // Derive a single, non-duplicative status/time display
+  const gst = String(g.game_status_text||'').trim();
+  const isLive = /Q\d|OT|Half|End|1st|2nd|3rd|4th|LIVE|In Progress/i.test(gst);
+  isFinal = isFinal || /FINAL/i.test(gst);
+    const isEtTimeOnly = /\bET\b/i.test(gst) && !isLive && !/FINAL/i.test(gst) && /\d/.test(gst);
     let statusLine = '';
-    if (showResults && (actualHome!=null && actualAway!=null)) {
-      statusLine = 'FINAL';
-    } else if (g.game_status_text) {
-      statusLine = String(g.game_status_text);
-    } else if (localTime) {
-      statusLine = `Scheduled ${localTime}`;
+    if (isFinal) {
+      statusLine = `FINAL ${fmtNum(actualAway,0)}-${fmtNum(actualHome,0)}`;
+    } else if (isLive) {
+      statusLine = gst; // live string like Q2 05:32
+    } else {
+      statusLine = 'Scheduled';
     }
     const awayName = state.teams[away]?.name || away;
     const homeName = state.teams[home]?.name || home;
@@ -783,9 +801,10 @@ function renderDate(dateStr){
         const r = totalActual > tot ? 'Over' : (totalActual < tot ? 'Under' : 'Push');
         totResult = ` • Totals: ${r}`;
       }
-      totalDetailLine = `O/U: ${fmtNum(tot)}${side?` • Model: ${side} (Edge ${(T - tot>=0?'+':'')}${(T - tot).toFixed(2)})`:''}${totResult}`;
+  totalDetailLine = `O/U: ${fmtNum(tot)}${side?` • Model: ${side} (Edge ${(T - tot>=0?'+':'')}${(T - tot).toFixed(2)})`:''}${totResult}`;
     }
-    node.setAttribute('data-game-date', dtIso || dateStr);
+  node.setAttribute('data-game-date', dtIso || dateStr);
+  node.setAttribute('data-status', isFinal ? 'final' : (isLive ? 'live' : 'scheduled'));
     node.setAttribute('data-home-abbr', home);
     node.setAttribute('data-away-abbr', away);
   // Build chips: Totals, Spread, and Moneyline
@@ -803,10 +822,11 @@ function renderDate(dateStr){
         pOver = 1 - normCdf(zOver);
         pUnder = 1 - pOver;
       }
-      const priceOver = (odds.total_over_price!=null && odds.total_over_price!=='') ? Number(odds.total_over_price) : null;
-      const priceUnder = (odds.total_under_price!=null && odds.total_under_price!=='') ? Number(odds.total_under_price) : null;
-      const evO = (pOver!=null && priceOver!=null) ? evFromProbAndAmerican(pOver, priceOver) : null;
-      const evU = (pUnder!=null && priceUnder!=null) ? evFromProbAndAmerican(pUnder, priceUnder) : null;
+  // Default to -110 when explicit O/U prices are missing (parity with summary section)
+  const priceOver = (odds.total_over_price!=null && odds.total_over_price!=='') ? Number(odds.total_over_price) : -110;
+  const priceUnder = (odds.total_under_price!=null && odds.total_under_price!=='') ? Number(odds.total_under_price) : -110;
+  const evO = (pOver!=null && priceOver!=null) ? evFromProbAndAmerican(pOver, priceOver) : null;
+  const evU = (pUnder!=null && priceUnder!=null) ? evFromProbAndAmerican(pUnder, priceUnder) : null;
       const clsO = (evO==null? 'neutral' : (evO>0? 'positive' : (evO<0? 'negative' : 'neutral')));
       const clsU = (evU==null? 'neutral' : (evU>0? 'positive' : (evU<0? 'negative' : 'neutral')));
       const evOBadge = (evO==null? '' : `<span class="ev-badge ${evO>0?'pos':(evO<0?'neg':'neu')}">EV ${(evO>0?'+':'')}${(evO*100).toFixed(1)}%</span>`);
@@ -842,8 +862,8 @@ function renderDate(dateStr){
           pHomeCover = 1 - normCdf(zHome);
           pAwayCover = 1 - pHomeCover;
         }
-        const priceHome = (odds.home_spread_price!=null && odds.home_spread_price!=='') ? Number(odds.home_spread_price) : null;
-        const priceAway = (odds.away_spread_price!=null && odds.away_spread_price!=='') ? Number(odds.away_spread_price) : null;
+  const priceHome = (odds.home_spread_price!=null && odds.home_spread_price!=='') ? Number(odds.home_spread_price) : -110;
+  const priceAway = (odds.away_spread_price!=null && odds.away_spread_price!=='') ? Number(odds.away_spread_price) : -110;
         const evH = (pHomeCover!=null && priceHome!=null) ? evFromProbAndAmerican(pHomeCover, priceHome) : null;
         const evA = (pAwayCover!=null && priceAway!=null) ? evFromProbAndAmerican(pAwayCover, priceAway) : null;
         const clsH = (evH==null? 'neutral' : (evH>0? 'positive' : (evH<0? 'negative' : 'neutral')));
@@ -940,7 +960,7 @@ function renderDate(dateStr){
       const aML = (odds.away_ml!=null)?fmtOddsAmerican(odds.away_ml):'—';
       const tot = Number.isFinite(Number(odds.total)) ? Number(odds.total).toFixed(1) : '—';
       const spr = Number.isFinite(Number(odds.home_spread)) ? fmtNum(Number(odds.home_spread)) : '—';
-      linesLine = `Lines: ML H ${hML} / A ${aML} · Total ${tot} · PL/Spread H ${spr}`;
+  linesLine = `Lines: ML H ${hML} / A ${aML} · O/U ${tot} · Spread H ${spr}`;
     }
 
     let modelPickHtml = '';
@@ -956,9 +976,9 @@ function renderDate(dateStr){
         <div class="game-date js-local-time">${dtIso || dateStr}</div>
         ${venue ? `<div class=\"venue\">${venue}</div>` : ''}
         <div class="state">${statusLine}</div>
-        <div class="period-pill"></div>
-        <div class="time-left">${localTime || ''}</div>
-        ${isFinal ? `<div class=\"result-badge\">${w}W-${l}L${psh>0?`-${psh}P`:''}</div>` : ''}
+  <div class="period-pill"></div>
+  <div class="time-left">${''}</div>
+  ${isFinal ? `<div class=\"result-badge\">${w}W-${l}L${psh>0?`-${psh}P`:''}</div>` : ''}
       </div>
       <div class="row matchup">
         <div class="team side">
@@ -998,8 +1018,9 @@ function renderDate(dateStr){
       ${atsLine ? `<div class=\"row details small\"><div class=\"detail-col\">${atsLine}</div></div>` : ''}
       ${totalDetailLine ? `<div class=\"row details small\"><div class=\"detail-col\">${totalDetailLine}</div></div>` : ''}
       ${!hideOdds && oddsBlock ? `<div class=\"row details small\"><div class=\"detail-col\">${oddsBlock}</div></div>` : ''}
-      ${finals ? `<div class=\"row details small\"><div class=\"detail-col\">${finals}</div></div>` : ''}
+      
       ${propsBadges ? `<div class=\"row details small\"><div class=\"detail-col\">${propsBadges}</div></div>` : ''}
+      
       <div class=\"row details small\"><div class=\"detail-col\"><div>Debug: ${dateStr} | ${home}-${away} | hasOdds=${hasAnyOdds?1:0}</div></div></div>
     `;
     wrap.appendChild(node);
@@ -1040,17 +1061,29 @@ function setupControls(){
     return best;
   };
   const paramDate = getQueryParam('date');
-  const defaultDate = (paramDate && (sched.includes(paramDate) ? paramDate : paramDate))
-    || nearestScheduled(today)
-    || (dates.includes(PIN_DATE) ? PIN_DATE : dates[0]);
+  const defaultDate = (paramDate || nearestScheduled(today) || (dates.includes(PIN_DATE) ? PIN_DATE : dates[0]));
   picker.value = defaultDate;
+  // Mirror NHL UX: default "Show results" to ON for past dates on initial load
+  try {
+    const resToggleInit = document.getElementById('resultsToggle');
+    if (resToggleInit) {
+      const todayDate = new Date(today);
+      const chosen = new Date(defaultDate);
+      if (!Number.isNaN(chosen.getTime()) && chosen < todayDate) {
+        resToggleInit.checked = true;
+      }
+    }
+  } catch(_) { /* ignore */ }
   const go = async ()=>{
     let d = picker.value;
-    const hasGames = (state.byDate.get(d) || []).length > 0;
-    if (STRICT_SCHEDULE_DATES || !hasGames) {
-      const near = nearestScheduled(d);
-      if (near && near !== d) {
-        d = near; picker.value = near;
+    // In static mode allow any requested date; if strict, snap to nearest scheduled
+    if (STRICT_SCHEDULE_DATES) {
+      const hasGames = (state.byDate.get(d) || []).length > 0;
+      if (!hasGames) {
+        const near = nearestScheduled(d);
+        if (near && near !== d) {
+          d = near; picker.value = near;
+        }
       }
     }
     await maybeLoadPredictions(d);

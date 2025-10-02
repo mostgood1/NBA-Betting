@@ -7,11 +7,11 @@ This is a lightweight static UI that renders the 2025–26 NBA schedule by date 
 - Predictions CSV (optional): `../predictions_YYYY-MM-DD.csv` (generated via `python -m nba_betting.cli predict-date --date YYYY-MM-DD [--merge-odds odds.csv]`)
 
 ## Run locally
-Use any static server from the repo root so relative paths resolve:
+Run the Flask app which serves both the UI and APIs:
 
-- Python (already used in this repo):
-  - Start from repo root: `python -m http.server 8080`
-  - Open http://localhost:8080/web/index.html
+```powershell
+python app.py  # http://127.0.0.1:5050
+```
 
 The date picker defaults to today if available in the schedule; otherwise the first schedule date. If a `predictions_YYYY-MM-DD.csv` exists for the selected date, recommendation badges are shown.
 

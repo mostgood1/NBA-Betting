@@ -1,0 +1,2 @@
+date,home_team,visitor_team,home_tri,away_tri,home_pts,visitor_pts,pred_margin,pred_total,actual_margin,total_actual,margin_error,total_error
+2025-10-02,New York Knicks,Philadelphia 76ers,NYK,PHI,99.0,84.0,10.52986706659244,225.5411482975389,15.0,183.0,-4.470132933407561,42.54114829753891

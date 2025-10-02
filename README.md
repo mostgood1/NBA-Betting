@@ -210,7 +210,7 @@ Run locally (Windows PowerShell):
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python app.py  # http://localhost:5050
+python app.py  # http://127.0.0.1:5050
 ```
 
 Deploy on Render (Blueprint):
@@ -229,8 +229,9 @@ Routing:
 - Legacy `/web/` and `/web/index.html` redirect to `/` for a single canonical entrypoint
 
 Notes:
-- The UI is static; the app serves JSON/CSV artifacts directly from the repo (`/data/...`) for the client to render.
-- Prefer hitting cron endpoints to regenerate predictions/odds artifacts; the page will reflect updates without redeploy.
+- Use the Flask app for both UI and APIs (no separate static http.server is needed).
+- The app serves JSON/CSV artifacts directly from `/data/...` for the client to render.
+- Prefer hitting cron endpoints or CLI to regenerate predictions/odds artifacts; the page will reflect updates without redeploy.
 
 ## Admin endpoints (optional)
 

@@ -2,12 +2,24 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "Serve web folder",
+			"label": "Run Flask app",
 			"type": "shell",
-			"command": "python -m http.server 8080",
-			"args": [],
+			"command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+			"args": ["app.py"],
 			"isBackground": true,
-			"group": "build"
+			"problemMatcher": []
+		},
+		{
+			"label": "Cron: run-all (today)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy","Bypass",
+				"-File","${workspaceFolder}\\scripts\\run_cron.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }

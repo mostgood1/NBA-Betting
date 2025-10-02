@@ -14,8 +14,13 @@ from .teams import normalize_team
 
 _BOVADA_REGIONS = ["A", "B", "C"]  # A: Americas, others as fallback
 _BOVADA_BASES = [
+    # Regular season categories
     "https://www.bovada.lv/services/sports/event/v2/events/{region}/description/basketball/nba",
     "https://www.bovada.lv/services/sports/event/v2/events/{region}/description/basketball/usa/nba",
+    # Preseason categories (correct slug is 'nba-pre-season')
+    "https://www.bovada.lv/services/sports/event/v2/events/{region}/description/basketball/nba-pre-season",
+    "https://www.bovada.lv/services/sports/event/v2/events/{region}/description/basketball/usa/nba-pre-season",
+    # Some deployments have used 'nba-preseason' historically; keep as fallback
     "https://www.bovada.lv/services/sports/event/v2/events/{region}/description/basketball/nba-preseason",
 ]
 _BOVADA_PARAMS = [
@@ -36,7 +41,8 @@ HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "Origin": "https://www.bovada.lv",
-    "Referer": "https://www.bovada.lv/sports/basketball/nba",
+    # Use preseason referer which is valid for both preseason and regular pages
+    "Referer": "https://www.bovada.lv/sports/basketball/nba-pre-season",
     "Connection": "keep-alive",
 }
 
@@ -80,10 +86,12 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
             return None
     
     def _is_full_game(period_desc: str, dg_desc: str) -> bool:
-        if "game lines" in dg_desc:
+        # Treat 'Game Lines' and 'Main' display groups as full-game
+        if ("game lines" in dg_desc) or ("main" in dg_desc):
             return True
         pd = period_desc
-        return any(k in pd for k in ["game", "match", "full", "regular time", "regulation"]) or (pd.strip() == "")
+        # Consider generic or preseason descriptors as full game
+        return any(k in pd for k in ["game", "match", "full", "regular time", "regulation", "regular", "pre", "pre-season", "preseason"]) or (pd.strip() == "")
     
     def _looks_team_total(mtype: str, dg_desc: str) -> bool:
         mt = mtype
@@ -114,7 +122,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                 # Avoid alternate lines to keep a single canonical line
                 continue
             # If display group doesn't look like full game, require period_desc that looks like game/match
-            if ("game lines" not in dg_desc) and not any(k in period_desc for k in ["game", "match", "full", "regular time", "regulation"]):
+            if (("game lines" not in dg_desc) and ("main" not in dg_desc)) and not any(k in period_desc for k in ["game", "match", "full", "regular time", "regulation", "regular", "pre", "pre-season", "preseason"]):
                 # Allow totals/spreads named as game types as a fallback
                 if not any(k in mtype for k in [
                     "moneyline", "money line", "match odds", "match result", "to win",
@@ -191,7 +199,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
                     if hval is None:
                         continue
                     # Only set total when period indicates a game/match or in a group named game lines
-                    if ("game lines" not in dg_desc) and not any(k in period_desc for k in ["game", "match", "full", "regular"]):
+                    if (("game lines" not in dg_desc) and ("main" not in dg_desc)) and not any(k in period_desc for k in ["game", "match", "full", "regular", "pre", "pre-season", "preseason"]):
                         continue
                     # Exclude team totals by display group name
                     if "team" in dg_desc:
@@ -300,7 +308,7 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
             out["away_spread"] = rec.get("away_h")
             out["home_spread_price"] = rec.get("home_price")
             out["away_spread_price"] = rec.get("away_price")
-    # Choose best total candidate: require both prices; prefer prices near -110
+    # Choose best total candidate: prefer both prices but accept with one; prefer prices near -110
     if total_cands:
         def total_score(line: float, rec: dict) -> tuple:
             op = rec.get("over_price"); up = rec.get("under_price")
@@ -311,8 +319,9 @@ def _extract_markets(ev: dict, *, home_norm: str | None = None, away_norm: str |
         # Accept lines even if one price missing; pick best by prio then juice closeness
         ln, rc = sorted(total_cands.items(), key=lambda it: total_score(it[0], it[1]))[0]
         out["total"] = ln
-        out["total_over_price"] = rc.get("over_price")
-        out["total_under_price"] = rc.get("under_price")
+        op = rc.get("over_price"); up = rc.get("under_price")
+        out["total_over_price"] = op if op is not None else -110
+        out["total_under_price"] = up if up is not None else -110
     return out
 
 
