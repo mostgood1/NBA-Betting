@@ -2,6 +2,3 @@
 *
 !.gitignore
 !README.md
-# Allow committing logo assets if added (optional)
-!*.svg
-!*.png

@@ -46,16 +46,17 @@ function fmtLocalDate(iso){
 
 function teamLogoUrl(tri){
   const t = String(tri||'').toUpperCase();
+  // This returns a local path, but we'll try CDN first in teamLineHTML.
   return `/web/assets/logos/${t}.svg`;
 }
 
 function teamLineHTML(tri){
   const t = String(tri||'').toUpperCase();
   const team = state.teams[t] || { tricode:t, name:t };
-  const svg = teamLogoUrl(t);
-  const png = svg.replace('.svg', '.png');
-  // Build a prioritized fallback list of remote CDN logo URLs (Render may not ship local assets)
-  const cdnList = (function(){
+  const localSvg = teamLogoUrl(t);
+  const localPng = localSvg.replace('.svg', '.png');
+  // Build a prioritized list of sources preferring CDN links
+  const fallbacks = (function(){
     const id = (state.teams[t] && state.teams[t].id) ? String(state.teams[t].id) : null;
     const urls = [];
     if (id){
@@ -66,11 +67,13 @@ function teamLineHTML(tri){
         `https://cdn.nba.com/logos/nba/${id}/global/L/logo.png`,
       );
     }
+    // Lastly, try local assets if present
+    urls.push(localSvg, localPng);
     return urls;
   })();
   return `
     <div class="team-line-inner">
-      <img src="${svg}" alt="${t}" class="logo" data-tri="${t}" data-cdn="${cdnList.join('|')}" onerror="handleLogoError(this)"/>
+      <img src="${fallbacks[0] || localSvg}" alt="${t}" class="logo" data-tri="${t}" data-cdn="${fallbacks.join('|')}" onerror="handleLogoError(this)"/>
       <span class="name">${team.name || t}</span>
     </div>`;
 }
