@@ -1432,7 +1432,7 @@ def api_cron_run_all():
             results["props_actuals_error"] = str(e)
         # 5) compute props edges for today via CLI if available
         try:
-            rc5 = _run_to_file([str(py), "-m", "nba_betting.cli", "props-edges", "--date", d_today], log_file, cwd=BASE_DIR, env=env)
+            rc5 = _run_to_file([str(py), "-m", "nba_betting.cli", "props-edges", "--date", d_today, "--source", "auto"], log_file, cwd=BASE_DIR, env=env)
             results["props_edges"] = int(rc5)
         except Exception as e:
             results["props_edges_error"] = str(e)

@@ -513,6 +513,128 @@ def fetch_bovada_odds_current(date: datetime | str, verbose: bool = False) -> pd
     return df.reset_index(drop=True)
 
 
+def fetch_bovada_player_props_current(date: datetime | str, verbose: bool = False) -> pd.DataFrame:
+    """Fetch current player props from Bovada for events on the given calendar date (US/Eastern).
+
+    Returns normalized columns compatible with props_edges:
+      - bookmaker, bookmaker_title, market, outcome_name (Over/Under), player_name, point, price, commence_time
+    """
+    # Timezone handling similar to game odds
+    if ZoneInfo is not None:
+        try:
+            et = ZoneInfo("US/Eastern")
+        except Exception:
+            et = None
+    else:
+        et = None
+    target_et = pd.to_datetime(str(date)).date()
+    payloads = []
+    for url in ENDPOINTS:
+        try:
+            r = requests.get(url, timeout=30, headers=HEADERS)
+            if r.ok:
+                payloads.append(r.json())
+        except Exception as e:
+            if verbose:
+                print(f"[bovada-props] {url} failed: {e}")
+            continue
+
+    def _market_to_key(desc: str) -> str | None:
+        d = (desc or "").lower()
+        # Match common Bovada labels
+        if "points + rebounds + assists" in d or "+ rebounds + assists" in d or "points rebounds assists" in d or "pra" in d:
+            return "player_pr_points_rebounds_assists"
+        if "3-point" in d or "3pt" in d or "three point" in d or "3-point field goals" in d:
+            return "player_three_pointers"
+        if "rebounds" in d:
+            return "player_rebounds"
+        if "assists" in d:
+            return "player_assists"
+        if "points" in d:
+            return "player_points"
+        return None
+
+    def _parse_player_from_market(desc: str) -> str:
+        # Bovada market descriptions are like "LeBron James - Total Points" or "LeBron James - Points"
+        s = str(desc or "")
+        if " - " in s:
+            return s.split(" - ", 1)[0].strip()
+        # Fallback: remove trailing qualifiers
+        for token in [" total", " - points", " points", " rebounds", " assists", " 3-point", " threes", " pra"]:
+            if s.lower().endswith(token):
+                return s[: -len(token)].strip()
+        return s.strip()
+
+    rows: list[dict] = []
+    for p in payloads:
+        try:
+            for events in _walk_event_lists(p):
+                for ev in (events or []):
+                    try:
+                        dt = _to_dt_utc(ev.get("startTime"))
+                        if dt is not None:
+                            try:
+                                ct = dt.tz_convert(et).date() if et is not None else dt.date()
+                            except Exception:
+                                ct = dt.date()
+                        else:
+                            ct = None
+                        if ct != target_et:
+                            continue
+                        dgs = ev.get("displayGroups", []) or []
+                        for dg in dgs:
+                            for m in dg.get("markets", []) or []:
+                                mdesc = m.get("description") or m.get("marketType") or ""
+                                # Player-specific markets often include the player's name in market description
+                                player_name = _parse_player_from_market(mdesc)
+                                key = _market_to_key(mdesc)
+                                if key is None:
+                                    # Some payloads put player in outcomes description like "Over/Under - LeBron James"
+                                    # Try outcomes to detect market type
+                                    od = " ".join([(o.get("description") or o.get("name") or "") for o in (m.get("outcomes") or [])]).lower()
+                                    key = _market_to_key(od)
+                                if key is None or not player_name or player_name.lower() in ("over", "under"):
+                                    continue
+                                for oc in m.get("outcomes", []) or []:
+                                    typ = (oc.get("type") or oc.get("description") or "").lower()
+                                    if "over" in typ:
+                                        outcome = "Over"
+                                    elif "under" in typ:
+                                        outcome = "Under"
+                                    else:
+                                        continue
+                                    price_obj = oc.get("price") or {}
+                                    point = price_obj.get("handicap") or oc.get("handicap")
+                                    try:
+                                        line = float(point)
+                                    except Exception:
+                                        line = None
+                                    american = price_obj.get("american")
+                                    try:
+                                        price = int(str(american).lstrip("+")) if american is not None else None
+                                    except Exception:
+                                        price = None
+                                    if line is None or price is None:
+                                        continue
+                                    rows.append({
+                                        "bookmaker": "bovada",
+                                        "bookmaker_title": "Bovada",
+                                        "market": key,
+                                        "outcome_name": outcome,
+                                        "player_name": player_name,
+                                        "point": line,
+                                        "price": price,
+                                        "commence_time": dt.isoformat() if dt is not None else None,
+                                    })
+                    except Exception as e:
+                        if verbose:
+                            print(f"[bovada-props] event parse error: {e}")
+                        continue
+        except Exception:
+            continue
+    return pd.DataFrame(rows)
+
+
 def probe_bovada(date: datetime | str, verbose: bool = False) -> dict:
     """Probe Bovada endpoints and report counts for the given date (US/Eastern match).
 

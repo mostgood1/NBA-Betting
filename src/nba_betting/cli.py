@@ -536,7 +536,8 @@ def evaluate_props_cmd(start: str, end: str, slate_only: bool):
 @cli.command("props-edges")
 @click.option("--date", "date_str", type=str, required=True, help="Slate date YYYY-MM-DD")
 @click.option("--use-saved/--no-use-saved", default=True, show_default=True, help="Prefer odds in data/raw if present before fetching")
-@click.option("--mode", type=click.Choice(["auto","historical","current"]), default="auto", show_default=True, help="If fetching, whether to use historical snapshots, current event odds, or auto")
+@click.option("--mode", type=click.Choice(["auto","historical","current"]), default="auto", show_default=True, help="If fetching via OddsAPI, whether to use historical snapshots, current event odds, or auto")
+@click.option("--source", type=click.Choice(["auto","oddsapi","bovada"]), default="auto", show_default=True, help="Odds source for player props: oddsapi, bovada, or auto")
 @click.option("--api-key", envvar="ODDS_API_KEY", type=str, required=False, help="OddsAPI key (or set env ODDS_API_KEY)")
 @click.option("--sigma-pts", type=float, default=7.5, show_default=True)
 @click.option("--sigma-reb", type=float, default=3.0, show_default=True)
@@ -549,7 +550,7 @@ def evaluate_props_cmd(start: str, end: str, slate_only: bool):
 @click.option("--top", type=int, default=1000, show_default=False, help="Limit to top N edges after filtering")
 @click.option("--bookmakers", type=str, default=None, help="Comma-separated bookmaker keys to include (e.g., draftkings,fanduel,pinnacle)")
 @click.option("--calibrate-sigma/--no-calibrate-sigma", default=False, show_default=True, help="Estimate sigma per stat from recent residuals")
-def props_edges_cmd(date_str: str, use_saved: bool, mode: str, api_key: str | None, sigma_pts: float, sigma_reb: float, sigma_ast: float, sigma_threes: float, sigma_pra: float, slate_only: bool, min_edge: float, min_ev: float, top: int, bookmakers: str | None, calibrate_sigma: bool):
+def props_edges_cmd(date_str: str, use_saved: bool, mode: str, source: str, api_key: str | None, sigma_pts: float, sigma_reb: float, sigma_ast: float, sigma_threes: float, sigma_pra: float, slate_only: bool, min_edge: float, min_ev: float, top: int, bookmakers: str | None, calibrate_sigma: bool):
     """Compute player props edges (EV) by merging model predictions with OddsAPI lines for a date.
 
     Writes data/processed/props_edges_YYYY-MM-DD.csv
@@ -569,7 +570,7 @@ def props_edges_cmd(date_str: str, use_saved: bool, mode: str, api_key: str | No
         except Exception:
             pass
     try:
-        edges = compute_props_edges(date=date_str, sigma=sigma, use_saved=use_saved, mode=mode, api_key=api_key)
+        edges = compute_props_edges(date=date_str, sigma=sigma, use_saved=use_saved, mode=mode, api_key=api_key, source=source)
     except FileNotFoundError as e:
         console.print(str(e), style="red"); return
     except Exception as e:

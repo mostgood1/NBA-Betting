@@ -11,6 +11,7 @@ from .props_train import predict_props
 from .props_features import build_features_for_date
 from .props_train import _load_features as _load_props_features  # reuse saved features for sigma calibration
 from .odds_api import OddsApiConfig, backfill_player_props, fetch_player_props_current
+from .odds_bovada import fetch_bovada_player_props_current
 
 
 # Map OddsAPI player markets to our prediction columns
@@ -141,7 +142,7 @@ def _fetch_odds_for_date(date: datetime, mode: str, api_key: Optional[str]) -> p
     return pd.DataFrame()
 
 
-def compute_props_edges(date: str, sigma: SigmaConfig, use_saved: bool = True, mode: str = "auto", api_key: Optional[str] = None) -> pd.DataFrame:
+def compute_props_edges(date: str, sigma: SigmaConfig, use_saved: bool = True, mode: str = "auto", api_key: Optional[str] = None, source: str = "auto") -> pd.DataFrame:
     """Compute model edges/EV against OddsAPI player props for a given date.
 
     Returns a DataFrame with: date, player_name, stat, side, line, price, implied_prob, model_prob, edge, ev, bookmaker.
@@ -166,13 +167,26 @@ def compute_props_edges(date: str, sigma: SigmaConfig, use_saved: bool = True, m
     preds["name_key"] = preds["player_name"].astype(str).map(_norm_name)
     preds["short_key"] = preds["player_name"].astype(str).map(_short_key)
 
-    # Load odds
+    # Load odds (OddsAPI or Bovada based on source)
     odds = pd.DataFrame()
-    if use_saved:
-        odds = _odds_for_date_from_saved(target_date)
-    if odds is None or odds.empty:
-        fetched = _fetch_odds_for_date(target_date, mode=mode, api_key=api_key)
-        odds = fetched if fetched is not None else pd.DataFrame()
+    src = (source or "auto").lower()
+    if src == "oddsapi":
+        if use_saved:
+            odds = _odds_for_date_from_saved(target_date)
+        if odds is None or odds.empty:
+            fetched = _fetch_odds_for_date(target_date, mode=mode, api_key=api_key)
+            odds = fetched if fetched is not None else pd.DataFrame()
+    elif src == "bovada":
+        odds = fetch_bovada_player_props_current(target_date)
+    else:
+        # auto: try saved/current OddsAPI first, then fall back to Bovada
+        if use_saved:
+            odds = _odds_for_date_from_saved(target_date)
+        if odds is None or odds.empty:
+            fetched = _fetch_odds_for_date(target_date, mode=mode, api_key=api_key)
+            odds = fetched if fetched is not None else pd.DataFrame()
+        if odds is None or odds.empty:
+            odds = fetch_bovada_player_props_current(target_date)
     if odds is None or odds.empty:
         return pd.DataFrame()
 
