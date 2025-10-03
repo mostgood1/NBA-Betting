@@ -555,15 +555,34 @@ def fetch_bovada_player_props_current(date: datetime | str, verbose: bool = Fals
         return None
 
     def _parse_player_from_market(desc: str) -> str:
-        # Bovada market descriptions are like "LeBron James - Total Points" or "LeBron James - Points"
-        s = str(desc or "")
+        """Extract a player name from Bovada market descriptions.
+
+        Handles formats like:
+        - "LeBron James - Total Points"
+        - "Points Milestones - Devin Booker (PHX)"
+        - "Assists - Chris Paul"
+        """
+        s = str(desc or "").strip()
+        low = s.lower()
+        # Try pattern where name is after hyphen and before optional team parentheses
+        import re
+        m = re.search(r"-\s*([A-Za-z][A-Za-z .\-']+?)(?:\s*\([A-Z]{2,3}\))?$", s)
+        if m:
+            return m.group(1).strip()
+        # Try pattern where name is before hyphen
         if " - " in s:
-            return s.split(" - ", 1)[0].strip()
-        # Fallback: remove trailing qualifiers
-        for token in [" total", " - points", " points", " rebounds", " assists", " 3-point", " threes", " pra"]:
-            if s.lower().endswith(token):
-                return s[: -len(token)].strip()
-        return s.strip()
+            left = s.split(" - ", 1)[0].strip()
+            # If left part looks like a person (two tokens), use it
+            parts = [p for p in left.replace("-", " ").split() if p]
+            if len(parts) >= 2 and all(any(c.isalpha() for c in p) for p in parts[:2]):
+                return left
+        # Fallback: strip common stat keywords from either end
+        repl = [" total", " points", " rebounds", " assists", " 3-point", " threes", " pra", " milestones"]
+        t = s
+        for token in repl:
+            if t.lower().endswith(token):
+                t = t[: -len(token)].strip()
+        return t
 
     rows: list[dict] = []
     for p in payloads:
@@ -595,32 +614,66 @@ def fetch_bovada_player_props_current(date: datetime | str, verbose: bool = Fals
                                     key = _market_to_key(od)
                                 if key is None or not player_name or player_name.lower() in ("over", "under"):
                                     continue
-                                for oc in m.get("outcomes", []) or []:
+                                outcomes = m.get("outcomes", []) or []
+                                # Case 1: Standard Over/Under with handicap
+                                std_found = False
+                                for oc in outcomes:
                                     typ = (oc.get("type") or oc.get("description") or "").lower()
-                                    if "over" in typ:
-                                        outcome = "Over"
-                                    elif "under" in typ:
-                                        outcome = "Under"
-                                    else:
+                                    if ("over" in typ) or ("under" in typ):
+                                        price_obj = oc.get("price") or {}
+                                        point = price_obj.get("handicap") or oc.get("handicap")
+                                        try:
+                                            line = float(point)
+                                        except Exception:
+                                            line = None
+                                        american = price_obj.get("american")
+                                        try:
+                                            price = int(str(american).lstrip("+")) if american is not None else None
+                                        except Exception:
+                                            price = None
+                                        if line is None or price is None:
+                                            continue
+                                        outcome = "Over" if "over" in typ else "Under"
+                                        rows.append({
+                                            "bookmaker": "bovada",
+                                            "bookmaker_title": "Bovada",
+                                            "market": key,
+                                            "outcome_name": outcome,
+                                            "player_name": player_name,
+                                            "point": line,
+                                            "price": price,
+                                            "commence_time": dt.isoformat() if dt is not None else None,
+                                        })
+                                        std_found = True
+                                if std_found:
+                                    continue
+                                # Case 2: Milestones like "To Score 10+ Points" -> treat as Over at N-0.5
+                                import re
+                                for oc in outcomes:
+                                    desc = (oc.get("description") or oc.get("name") or "").lower()
+                                    # Extract threshold like 10+ or 1+
+                                    mplus = re.search(r"(\d+)(?:\+)", desc)
+                                    if not mplus:
                                         continue
-                                    price_obj = oc.get("price") or {}
-                                    point = price_obj.get("handicap") or oc.get("handicap")
                                     try:
-                                        line = float(point)
+                                        thr = float(mplus.group(1))
                                     except Exception:
-                                        line = None
+                                        continue
+                                    # Map to stat-specific baseline (no change; Over at thr-0.5)
+                                    line = thr - 0.5
+                                    price_obj = oc.get("price") or {}
                                     american = price_obj.get("american")
                                     try:
                                         price = int(str(american).lstrip("+")) if american is not None else None
                                     except Exception:
                                         price = None
-                                    if line is None or price is None:
+                                    if price is None:
                                         continue
                                     rows.append({
                                         "bookmaker": "bovada",
                                         "bookmaker_title": "Bovada",
                                         "market": key,
-                                        "outcome_name": outcome,
+                                        "outcome_name": "Over",
                                         "player_name": player_name,
                                         "point": line,
                                         "price": price,
