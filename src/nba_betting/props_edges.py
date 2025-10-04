@@ -300,6 +300,13 @@ def compute_props_edges(date: str, sigma: SigmaConfig, use_saved: bool = True, m
         return pd.DataFrame()
     out = merged[out_cols].copy()
     out.insert(0, "date", pd.to_datetime(target_date).date())
+    # De-duplicate final edges across identical player/stat/side/line/price/bookmaker
+    dedup_keys = [
+        "date", "player_id", "player_name", "team", "stat", "side", "line", "price", "bookmaker", "bookmaker_title", "commence_time"
+    ]
+    keys = [c for c in dedup_keys if c in out.columns]
+    if keys:
+        out = out.drop_duplicates(subset=keys, keep="first").reset_index(drop=True)
     out.sort_values(["stat", "edge"], ascending=[True, False], inplace=True)
     return out
 

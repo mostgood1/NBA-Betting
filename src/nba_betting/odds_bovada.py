@@ -687,7 +687,17 @@ def fetch_bovada_player_props_current(date: datetime | str, verbose: bool = Fals
                         continue
         except Exception:
             continue
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        # Drop exact duplicates that Bovada sometimes repeats across display groups
+        keep = [
+            "bookmaker", "bookmaker_title", "market", "outcome_name",
+            "player_name", "point", "price", "commence_time"
+        ]
+        existing = [c for c in keep if c in df.columns]
+        if existing:
+            df = df.drop_duplicates(subset=existing, keep="first").reset_index(drop=True)
+    return df
 
 
 def probe_bovada(date: datetime | str, verbose: bool = False) -> dict:
