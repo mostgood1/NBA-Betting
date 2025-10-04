@@ -841,8 +841,26 @@ def api_props():
             df = df[pd.to_numeric(df["edge"], errors="coerce").fillna(0) >= min_edge]
         if "ev" in df.columns:
             df = df[pd.to_numeric(df["ev"], errors="coerce").fillna(0) >= min_ev]
+        # Collapse to best-of-book per player/stat/side/line by default (disable with collapse=0)
+        collapse_q = (request.args.get("collapse", "1") or "1").strip().lower()
+        do_collapse = collapse_q not in ("0", "false", "no")
+        collapsed = False
+        if do_collapse and ("ev" in df.columns):
+            try:
+                # Keys in order of preference
+                keys = [k for k in ["player_id", "player_name", "team", "stat", "side", "line"] if k in df.columns]
+                if len(keys) >= 4:
+                    tmp = df.copy()
+                    tmp["ev"] = pd.to_numeric(tmp["ev"], errors="coerce")
+                    tmp["edge"] = pd.to_numeric(tmp.get("edge", 0), errors="coerce")
+                    # Sort to pick highest EV, then highest edge within group
+                    tmp = tmp.sort_values(["stat", "ev", "edge"], ascending=[True, False, False])
+                    df = tmp.groupby(keys, as_index=False, sort=False).head(1)
+                    collapsed = True
+            except Exception:
+                pass
         rows = df.fillna("").to_dict(orient="records")
-        return jsonify({"date": d, "source": src, "rows": rows})
+        return jsonify({"date": d, "source": src, "rows": rows, "collapsed": collapsed})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

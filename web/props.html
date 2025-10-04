@@ -10,7 +10,10 @@
     const d = document.getElementById('datePicker').value;
     const minEdge = document.getElementById('minEdge').value;
     const minEV = document.getElementById('minEV').value;
-    const res = await fetch(`/api/props?date=${d}&min_edge=${minEdge}&min_ev=${minEV}`);
+  const params = new URLSearchParams(window.location.search);
+  const collapseParam = params.get('collapse');
+  const collapse = collapseParam===null ? 1 : collapseParam;
+  const res = await fetch(`/api/props?date=${d}&min_edge=${minEdge}&min_ev=${minEV}&collapse=${collapse}`);
     const js = await res.json();
     const tbody = document.querySelector('#tbl tbody');
     tbody.innerHTML='';
@@ -22,7 +25,8 @@
       tr.innerHTML = `<td>${r.team||''}</td><td>${r.player_name||''}</td><td>${(r.stat||'').toUpperCase()}</td><td>${r.side||''}</td><td>${r.line||''}</td><td>${r.price||''}</td><td>${edge}</td><td>${ev}</td><td>${r.bookmaker||''}</td>`;
       tbody.appendChild(tr);
     }
-    document.getElementById('summary').textContent = `Date ${js.date||d} — ${rows.length} props (${js.source||'n/a'})`;
+  const collapsed = js.collapsed ? 'best-of-book' : 'all books';
+  document.getElementById('summary').textContent = `Date ${js.date||d} — ${rows.length} props (${js.source||'n/a'}, ${collapsed})`;
   }
   window.addEventListener('DOMContentLoaded', ()=>{
     const today = new Date().toISOString().slice(0,10);
