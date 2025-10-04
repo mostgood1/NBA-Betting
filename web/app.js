@@ -19,6 +19,11 @@ const state = {
   reconProps: [],
   propsEdges: [],
   propsFilters: { minEdge: 0.05, minEV: 0.0 },
+  poll: {
+    timer: null,
+    date: null,
+    lastPayload: null,
+  }
 };
 
 function getQueryParam(name){
@@ -1061,6 +1066,10 @@ function renderDate(dateStr){
     `;
     wrap.appendChild(node);
   }
+  // Start or refresh live polling for this date
+  try {
+    startScoreboardPolling(dateStr);
+  } catch(_){}
   // Format all game dates into the user's local timezone similar to NHL
   try{
     const nodes = Array.from(document.querySelectorAll('.card .js-local-time'));
@@ -1071,6 +1080,121 @@ function renderDate(dateStr){
       if (!isNaN(d)) node.textContent = fmt.format(d);
     });
   }catch(_){}
+
+// --- Live polling (scoreboard) ---
+async function pollScoreboardOnce(dateStr){
+  try{
+    const url = new URL('/api/scoreboard', window.location.origin);
+    url.searchParams.set('date', dateStr);
+    const r = await fetch(url.toString(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('scoreboard fetch failed');
+    const j = await r.json();
+    state.poll.lastPayload = j;
+    // Heartbeat UI
+    try{
+      const hb = document.getElementById('hbDot');
+      const ts = document.getElementById('last-sb');
+      if (hb){ hb.classList.remove('pulse'); void hb.offsetWidth; hb.classList.add('pulse'); }
+      if (ts){ ts.textContent = new Date().toLocaleTimeString(); }
+    }catch(_){/* ignore */}
+    if (!j || !Array.isArray(j.games)) return;
+    const map = new Map();
+    for (const g of j.games){
+      const home = String(g.home||'').toUpperCase();
+      const away = String(g.away||'').toUpperCase();
+      map.set(`${home}|${away}`, g);
+    }
+    const cards = Array.from(document.querySelectorAll('.card'));
+    let anyFinalized = false;
+    for (const c of cards){
+      const home = c.getAttribute('data-home-abbr');
+      const away = c.getAttribute('data-away-abbr');
+      const key = `${home}|${away}`;
+      const g = map.get(key);
+      if (!g) continue;
+      // Update status
+      const stateEl = c.querySelector('.row.head .state');
+      if (stateEl && g.status){
+        const up = String(g.status);
+        stateEl.textContent = up;
+        const crit = /End|Final|FINAL|OT/i.test(up) ? false : /Q4|4th/i.test(up);
+        if (crit) stateEl.classList.add('crit'); else stateEl.classList.remove('crit');
+        // Parse into period/time-left
+        const perEl = c.querySelector('.row.head .period-pill');
+        const tEl = c.querySelector('.row.head .time-left');
+        if (perEl && tEl){
+          let period = '';
+          let tleft = '';
+          const s = up.toUpperCase();
+          if (/FINAL/.test(s)) { period = 'FINAL'; tleft = ''; }
+          else if (/HALF/.test(s)) { period = 'HT'; tleft = ''; }
+          else if (/END\s*Q(\d)/.test(s)) { const m=/END\s*Q(\d)/.exec(s); period = `Q${m[1]}`; tleft='END'; }
+          else if (/(Q\d)\s+(\d\d?:\d\d)/.test(up)) { const m=/(Q\d)\s+(\d\d?:\d\d)/.exec(up); period = m[1].toUpperCase(); tleft = m[2]; }
+          else if (/OT/.test(s)) { period = 'OT'; tleft = ''; }
+          perEl.textContent = period;
+          tEl.textContent = tleft;
+          // critical style if late Q4 or OT with small time left
+          const late = (period==='Q4' && tleft) || period==='OT';
+          if (late) { perEl.classList.add('crit'); tEl.classList.add('crit'); } else { perEl.classList.remove('crit'); tEl.classList.remove('crit'); }
+          if (period==='HT') { perEl.classList.add('int'); } else { perEl.classList.remove('int'); }
+        }
+      }
+      // Update scores
+      const a = c.querySelector('.js-live-away');
+      const h = c.querySelector('.js-live-home');
+      if (a && g.away_pts!=null) a.textContent = String(g.away_pts);
+      if (h && g.home_pts!=null) h.textContent = String(g.home_pts);
+      // Update final badge and card class if now final
+      if (g.final){
+        c.setAttribute('data-status','final');
+        if (!/final/i.test(c.querySelector('.row.head .state')?.textContent||'')) {
+          anyFinalized = true;
+        }
+        // If results toggle is on, re-render this card’s results details by forcing minimal refresh
+        try{
+          const showResults = document.getElementById('resultsToggle')?.checked;
+          if (showResults){
+            // Quick patch: append FINAL badge if missing
+            const head = c.querySelector('.row.head');
+            if (head && !head.querySelector('.result-badge')){
+              const b = document.createElement('div');
+              b.className = 'result-badge';
+              b.textContent = 'Final';
+              head.appendChild(b);
+            }
+          }
+        }catch(_){/* ignore */}
+      } else {
+        c.setAttribute('data-status','live');
+      }
+    }
+    // If any game just finalized and results view is enabled, refresh recon and re-render once
+    if (anyFinalized){
+      try{
+        const showResults = document.getElementById('resultsToggle')?.checked;
+        if (showResults){
+          await maybeLoadRecon(dateStr);
+          renderDate(dateStr);
+        }
+      }catch(_){/* ignore */}
+    }
+  }catch(e){
+    // soft-fail
+  }
+}
+
+function startScoreboardPolling(dateStr){
+  try{
+    state.poll.date = dateStr;
+    if (state.poll.timer) clearInterval(state.poll.timer);
+    // Skip polling if there are no visible games
+    const count = (state.byDate.get(dateStr) || []).length;
+    if (!count) return;
+    // Poll every 20s
+    pollScoreboardOnce(dateStr);
+    state.poll.timer = setInterval(()=> pollScoreboardOnce(dateStr), 20000);
+  }catch(_){/* ignore */}
+}
 }
 
 function setupControls(){

@@ -948,10 +948,10 @@ def api_scoreboard():
     d = _parse_date_param(request)
     if not d:
         return jsonify({"error": "missing date"}), 400
-    # Serve from cache within 30 seconds
+    # Serve from cache within 20 seconds
     now = time.time()
     ent = _scoreboard_cache.get(d)
-    if ent and now - ent[0] < 30:
+    if ent and now - ent[0] < 20:
         return jsonify(ent[1])
     if _scoreboardv2 is None:
         return jsonify({"date": d, "error": "nba_api not installed"}), 500
@@ -977,21 +977,34 @@ def api_scoreboard():
         if not gh.empty and not ls.empty:
             cgh = {c.upper(): c for c in gh.columns}
             cls = {c.upper(): c for c in ls.columns}
-            # Map TEAM_ID -> ABBR
-            abbr = {}
+            # Map TEAM_ID -> (ABBR, PTS)
+            teams = {}
             for _, r in ls.iterrows():
                 try:
-                    abbr[int(r[cls["TEAM_ID"]])] = str(r[cls["TEAM_ABBREVIATION"]]).upper()
+                    tid = int(r[cls["TEAM_ID"]])
+                    ab = str(r[cls["TEAM_ABBREVIATION"]]).upper()
+                    pts = None
+                    if "PTS" in cls:
+                        try:
+                            pts = int(r[cls["PTS"]])
+                        except Exception:
+                            pts = None
+                    teams[tid] = {"abbr": ab, "pts": pts}
                 except Exception:
-                    pass
+                    continue
             for _, g in gh.iterrows():
                 try:
                     hid = int(g[cgh["HOME_TEAM_ID"]]); vid = int(g[cgh["VISITOR_TEAM_ID"]])
+                    home = teams.get(hid, {}); away = teams.get(vid, {})
+                    stat_txt = g.get(cgh.get("GAME_STATUS_TEXT", "GAME_STATUS_TEXT"))
                     games.append({
-                        "home": abbr.get(hid),
-                        "away": abbr.get(vid),
-                        "status": g.get(cgh.get("GAME_STATUS_TEXT", "GAME_STATUS_TEXT")),
+                        "home": home.get("abbr"),
+                        "away": away.get("abbr"),
+                        "status": stat_txt,
                         "game_id": g.get(cgh.get("GAME_ID", "GAME_ID")),
+                        "home_pts": home.get("pts"),
+                        "away_pts": away.get("pts"),
+                        "final": (str(stat_txt or "").strip().upper().startswith("FINAL")),
                     })
                 except Exception:
                     continue
