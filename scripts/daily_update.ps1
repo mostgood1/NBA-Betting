@@ -5,7 +5,9 @@ Param(
   # If set, stage/commit/pull --rebase/push repo changes (data/processed etc.)
   [switch]$GitPush,
   # If set, do a 'git pull --rebase' before running to reduce conflicts
-  [switch]$GitSyncFirst
+  [switch]$GitSyncFirst,
+  # Optional: Remote server base URL (e.g., https://nba-betting.onrender.com)
+  [string]$RemoteBaseUrl = "https://nba-betting.onrender.com"
 )
 
 $ErrorActionPreference = 'Stop'
