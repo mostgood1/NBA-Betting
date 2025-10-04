@@ -1009,7 +1009,11 @@ function renderDate(dateStr){
       const pH = Number(pred.home_win_prob);
       const pickLbl = pH>=0.5 ? 'Home ML' : 'Away ML';
       const pct = (100*Math.max(pH,1-pH)).toFixed(1)+'%';
-  modelPickHtml = `<div class=\"row details small\"><div class=\"detail-col\"><div class=\"model-pill\">Model Pick: <strong>${pickLbl}</strong> · ${pct}</div></div></div>`;
+      if (hasAnyOdds) {
+        modelPickHtml = `<div class=\"row details small\"><div class=\"detail-col\"><div class=\"model-pill\">Model Pick: <strong>${pickLbl}</strong> · ${pct}</div></div></div>`;
+      } else {
+        modelPickHtml = `<div class=\"row details small\"><div class=\"detail-col\">Model Pick: <strong>${pickLbl}</strong> · ${pct}</div></div>`;
+      }
     }
 
     node.innerHTML = `
