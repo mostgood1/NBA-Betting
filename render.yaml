@@ -51,7 +51,7 @@ cronJobs:
         fromService:
           name: nba-betting
           type: web
-          envVarKey: BASE_URL
+          envVarKey: RENDER_EXTERNAL_URL
       - key: CRON_TOKEN
         fromService:
           name: nba-betting
@@ -71,7 +71,7 @@ cronJobs:
         fromService:
           name: nba-betting
           type: web
-          envVarKey: BASE_URL
+          envVarKey: RENDER_EXTERNAL_URL
       - key: CRON_TOKEN
         fromService:
           name: nba-betting
@@ -94,7 +94,7 @@ cronJobs:
         fromService:
           name: nba-betting
           type: web
-          envVarKey: BASE_URL
+          envVarKey: RENDER_EXTERNAL_URL
       - key: CRON_TOKEN
         fromService:
           name: nba-betting

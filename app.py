@@ -1358,6 +1358,10 @@ def api_cron_reconcile_games():
         if str(request.args.get("push", "0")).lower() in {"1","true","yes"}:
             ok, detail = _git_commit_and_push(msg=f"reconcile games {d}")
             pushed = bool(ok); push_detail = detail
+        try:
+            _cron_meta_update("reconcile_games", {"date": d, "rows": int(len(out_df)), "output": str(out), "pushed": pushed})
+        except Exception:
+            pass
         return jsonify({"date": d, "rows": int(len(out_df)), "output": str(out), "pushed": pushed, "push_detail": push_detail})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
