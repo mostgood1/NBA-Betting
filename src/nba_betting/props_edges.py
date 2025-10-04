@@ -214,11 +214,23 @@ def compute_props_edges(date: str, sigma: SigmaConfig, use_saved: bool = True, m
     # Second-pass resolve using short key for any unmatched players
     unmatched = merged[merged["player_id"].isna()].copy()
     if not unmatched.empty:
+        # Merge by short key; manage name collisions with suffixes and prefer prediction player_name
         alt = odds.merge(
             preds[["short_key", "player_id", "player_name", "team", pred_map["pts"], pred_map["reb"], pred_map["ast"], pred_map["threes"], pred_map["pra"]]].rename(columns={"short_key": "short_key_pred"}),
-            left_on="short_key", right_on="short_key_pred", how="left"
+            left_on="short_key", right_on="short_key_pred", how="left", suffixes=("", "_pred")
         )
-        alt = alt[["short_key", "player_id", "player_name", "team", pred_map["pts"], pred_map["reb"], pred_map["ast"], pred_map["threes"], pred_map["pra"]]].copy()
+        # Consolidate player_name from predictions when available, else keep odds name
+        if "player_name_pred" in alt.columns:
+            alt["player_name_join"] = alt["player_name_pred"].fillna(alt.get("player_name"))
+        else:
+            alt["player_name_join"] = alt.get("player_name")
+        keep = [
+            "short_key", "player_id", "player_name_join", "team",
+            pred_map["pts"], pred_map["reb"], pred_map["ast"], pred_map["threes"], pred_map["pra"]
+        ]
+        keep = [c for c in keep if c in alt.columns]
+        alt = alt[keep].copy()
+        alt = alt.rename(columns={"player_name_join": "player_name"})
         merged = merged.merge(alt.add_suffix("_alt"), left_on="short_key", right_on="short_key_alt", how="left")
         # Fill missing fields from alt
         for col in ["player_id", "player_name", "team", "model_mean"]:
@@ -266,9 +278,26 @@ def compute_props_edges(date: str, sigma: SigmaConfig, use_saved: bool = True, m
     merged["edge"] = merged["model_prob"] - merged["implied_prob"]
     merged["ev"] = merged.apply(lambda r: _ev_per_unit(r["price"], r["model_prob"]), axis=1)
 
-    out_cols = [
+    # Ensure we have a player_name column available; prefer odds name, then prediction name
+    if "player_name" not in merged.columns:
+        if "player_name_pred" in merged.columns:
+            merged["player_name"] = merged["player_name_pred"]
+        elif "player_name_alt" in merged.columns:
+            merged["player_name"] = merged["player_name_alt"]
+        else:
+            merged["player_name"] = None
+
+    # Default bookmaker_title if missing
+    if "bookmaker_title" not in merged.columns and "bookmaker" in merged.columns:
+        merged["bookmaker_title"] = merged["bookmaker"].map(lambda b: "Bovada" if str(b).lower()=="bovada" else None)
+
+    desired_cols = [
         "player_id", "player_name", "team", "stat", "side", "line", "price", "implied_prob", "model_prob", "edge", "ev", "bookmaker", "bookmaker_title", "commence_time"
     ]
+    out_cols = [c for c in desired_cols if c in merged.columns]
+    if not out_cols:
+        # If somehow nothing matches, return empty DataFrame to avoid exceptions
+        return pd.DataFrame()
     out = merged[out_cols].copy()
     out.insert(0, "date", pd.to_datetime(target_date).date())
     out.sort_values(["stat", "edge"], ascending=[True, False], inplace=True)

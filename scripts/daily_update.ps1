@@ -6,8 +6,8 @@ Param(
   [switch]$GitPush,
   # If set, do a 'git pull --rebase' before running to reduce conflicts
   [switch]$GitSyncFirst,
-  # Optional: Remote server base URL (e.g., https://nba-betting.onrender.com)
-  [string]$RemoteBaseUrl = "https://nba-betting.onrender.com"
+  # Optional: Remote server base URL (updated to the correct Render site)
+  [string]$RemoteBaseUrl = "https://nba-betting-5qgf.onrender.com"
 )
 
 $ErrorActionPreference = 'Stop'
