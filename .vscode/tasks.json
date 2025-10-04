@@ -21,5 +21,54 @@
 			"isBackground": false,
 			"problemMatcher": []
 		}
+		,
+		{
+			"label": "Daily: local update (props + predictions)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy","Bypass",
+				"-File","${workspaceFolder}\\scripts\\daily_update.ps1",
+				"-GitPush"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Props: edges (today, auto)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile","-ExecutionPolicy","Bypass","-Command",
+				"$d = Get-Date -Format 'yyyy-MM-dd'; & '${workspaceFolder}\\.venv\\Scripts\\python.exe' -m nba_betting.cli props-edges --date $d --source auto"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Schedule: register daily local updater",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile","-ExecutionPolicy","Bypass",
+				"-File","${workspaceFolder}\\scripts\\register_daily_task.ps1",
+				"-Time","10:00",
+				"-GitPush"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Schedule: unregister daily local updater",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile","-ExecutionPolicy","Bypass",
+				"-File","${workspaceFolder}\\scripts\\unregister_daily_task.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
 	]
 }

@@ -650,6 +650,47 @@ def api_last_updated():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/data-status")
+def api_data_status():
+    """Quick status for a date: counts for predictions, game_odds, props edges, and recon.
+
+    Query: ?date=YYYY-MM-DD (defaults to today UTC)
+    """
+    d = _parse_date_param(request)
+    if not d:
+        return jsonify({"error": "missing date"}), 400
+    out: Dict[str, Any] = {"date": d}
+    try:
+        # Predictions
+        p = _find_predictions_for_date(d)
+        out["predictions_path"] = str(p) if p else None
+        out["predictions_rows"] = int(len(pd.read_csv(p))) if p else 0
+    except Exception:
+        out["predictions_rows"] = 0
+    try:
+        # Game odds
+        go = _find_game_odds_for_date(d)
+        out["game_odds_path"] = str(go) if go else None
+        out["game_odds_rows"] = int(len(pd.read_csv(go))) if go else 0
+    except Exception:
+        out["game_odds_rows"] = 0
+    try:
+        # Props
+        pe = BASE_DIR / "data" / "processed" / f"props_edges_{d}.csv"
+        out["props_edges_path"] = str(pe) if pe.exists() else None
+        out["props_edges_rows"] = int(len(pd.read_csv(pe))) if pe.exists() else 0
+    except Exception:
+        out["props_edges_rows"] = 0
+    try:
+        # Recon
+        rg = BASE_DIR / "data" / "processed" / f"recon_games_{d}.csv"
+        out["recon_games_path"] = str(rg) if rg.exists() else None
+        out["recon_games_rows"] = int(len(pd.read_csv(rg))) if rg.exists() else 0
+    except Exception:
+        out["recon_games_rows"] = 0
+    return jsonify(out)
+
+
 @app.route("/api/predictions")
 def api_predictions():
     d = _parse_date_param(request)
@@ -1210,11 +1251,15 @@ def api_cron_reconcile_games():
     d = _parse_date_param(request, default_to_today=False)
     if not d:
         d = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
-    # Load predictions for that date
-    pred_path = BASE_DIR / f"predictions_{d}.csv"
-    if not pred_path.exists():
+    # Load predictions for that date (prefer processed/ fallback root)
+    pred_path = _find_predictions_for_date(d)
+    if pred_path is None:
         # Gracefully return rows=0 so cron runs don't fail on off days or missed predictions
         out = BASE_DIR / "data" / "processed" / f"recon_games_{d}.csv"
+        try:
+            _cron_meta_update("reconcile_games", {"date": d, "rows": 0, "output": None, "reason": "predictions missing"})
+        except Exception:
+            pass
         return jsonify({"date": d, "rows": 0, "output": None, "reason": "predictions missing"})
     try:
         preds = pd.read_csv(pred_path)
@@ -1407,6 +1452,11 @@ def api_cron_run_all():
     log_file = logdir / f"web_daily_update_{stamp}.log"
     results: Dict[str, Any] = {"date": d_today, "yesterday": d_yest, "log_file": str(log_file)}
     try:
+        # Resolve base URL for internal HTTP calls (Render-safe)
+        base_url = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("BASE_URL")
+        if not base_url:
+            port_env = os.environ.get("PORT", "5000")
+            base_url = f"http://127.0.0.1:{port_env}"
         # 1) predict-date today
         rc1 = _run_to_file([str(py), "-m", "nba_betting.cli", "predict-date", "--date", d_today], log_file, cwd=BASE_DIR, env=env)
         results["predict_date"] = int(rc1)
@@ -1415,7 +1465,7 @@ def api_cron_run_all():
             import requests as _rq
             token = os.environ.get("CRON_TOKEN")
             headers = {"Authorization": f"Bearer {token}"} if token else {}
-            r = _rq.get(f"http://127.0.0.1:5000/api/cron/refresh-bovada?date={d_today}", headers=headers, timeout=60)
+            r = _rq.get(f"{base_url}/api/cron/refresh-bovada?date={d_today}", headers=headers, timeout=60)
             results["refresh_bovada"] = (r.status_code, r.text[:200])
         except Exception as e:
             results["refresh_bovada_error"] = str(e)
@@ -1424,7 +1474,7 @@ def api_cron_run_all():
             import requests as _rq
             token = os.environ.get("CRON_TOKEN")
             headers = {"Authorization": f"Bearer {token}"} if token else {}
-            r = _rq.get(f"http://127.0.0.1:5000/api/cron/reconcile-games?date={d_yest}", headers=headers, timeout=60)
+            r = _rq.get(f"{base_url}/api/cron/reconcile-games?date={d_yest}", headers=headers, timeout=60)
             results["reconcile_games"] = (r.status_code, r.text[:200])
         except Exception as e:
             results["reconcile_games_error"] = str(e)

@@ -114,7 +114,27 @@ cronJobs:
         fromService:
           name: nba-betting
           type: web
-          envVarKey: BASE_URL
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: CRON_TOKEN
+        fromService:
+          name: nba-betting
+          type: web
+          envVarKey: CRON_TOKEN
+
+  # Daily: comprehensive chain (predict -> odds -> reconcile -> props actuals -> props edges)
+  - name: nba-betting-run-all-daily
+    schedule: "15 12 * * *"  # 12:15 UTC daily
+    env: docker
+    plan: free
+    image: alpine:3.19
+    command: >-
+      sh -lc "apk add --no-cache curl; curl -fsS -X POST \"$BASE_URL/api/cron/run-all?push=1\" -H \"Authorization: Bearer $CRON_TOKEN\""
+    envVars:
+      - key: BASE_URL
+        fromService:
+          name: nba-betting
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
       - key: CRON_TOKEN
         fromService:
           name: nba-betting
