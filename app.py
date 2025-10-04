@@ -955,6 +955,77 @@ def api_scoreboard():
         return jsonify(ent[1])
     if _scoreboardv2 is None:
         return jsonify({"date": d, "error": "nba_api not installed"}), 500
+    def _fallback_cdn(date_str: str) -> Optional[Dict[str, Any]]:
+        """Fallback to public CDN scoreboard JSON for the given date (UTC).
+
+        Uses https://data.nba.com/data/10s/prod/v1/YYYYMMDD/scoreboard.json
+        Returns payload in same shape as primary handler.
+        """
+        try:
+            import requests as _rq
+            ymd = date_str.replace("-", "")
+            url = f"https://data.nba.com/data/10s/prod/v1/{ymd}/scoreboard.json"
+            r = _rq.get(url, timeout=10, headers={
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': 'application/json, text/plain, */*',
+            })
+            if r.status_code != 200:
+                return None
+            j = r.json()
+            games: list[dict] = []
+            for g in j.get('games', []) or []:
+                try:
+                    home = (g.get('hTeam') or {}).get('triCode')
+                    away = (g.get('vTeam') or {}).get('triCode')
+                    sc_h = (g.get('hTeam') or {}).get('score')
+                    sc_a = (g.get('vTeam') or {}).get('score')
+                    try:
+                        hp = int(sc_h) if sc_h not in (None, "") else None
+                    except Exception:
+                        hp = None
+                    try:
+                        ap = int(sc_a) if sc_a not in (None, "") else None
+                    except Exception:
+                        ap = None
+                    status_num = int(g.get('statusNum') or 0)
+                    clock = str(g.get('clock') or '')
+                    period = (g.get('period') or {}).get('current')
+                    is_ht = (g.get('period') or {}).get('isHalftime')
+                    is_eop = (g.get('period') or {}).get('isEndOfPeriod')
+                    if status_num == 3:
+                        status_txt = 'Final'
+                        is_final = True
+                    elif status_num == 2:
+                        if is_ht:
+                            status_txt = 'Half'
+                        elif is_eop and period:
+                            status_txt = f'End Q{period}'
+                        elif period and clock:
+                            status_txt = f'Q{period} {clock}'
+                        elif period:
+                            status_txt = f'Q{period}'
+                        else:
+                            status_txt = 'LIVE'
+                        is_final = False
+                    else:
+                        # Scheduled
+                        status_txt = g.get('startTimeUTC') or 'Scheduled'
+                        is_final = False
+                    games.append({
+                        'home': home,
+                        'away': away,
+                        'status': status_txt,
+                        'game_id': g.get('gameId'),
+                        'home_pts': hp,
+                        'away_pts': ap,
+                        'final': bool(is_final),
+                    })
+                except Exception:
+                    continue
+            return { 'date': date_str, 'games': games }
+        except Exception:
+            return None
+
     try:
         # Harden headers
         try:
@@ -969,10 +1040,22 @@ def api_scoreboard():
                 })
         except Exception:
             pass
-        sb = _scoreboardv2.ScoreboardV2(game_date=d, day_offset=0, timeout=30)
-        nd = sb.get_normalized_dict()
-        gh = pd.DataFrame(nd.get("GameHeader", []))
-        ls = pd.DataFrame(nd.get("LineScore", []))
+        # Primary: nba_api with a short retry
+        tries = 0
+        last_err: Optional[Exception] = None
+        gh = pd.DataFrame(); ls = pd.DataFrame()
+        while tries < 2:
+            try:
+                sb = _scoreboardv2.ScoreboardV2(game_date=d, day_offset=0, timeout=35)
+                nd = sb.get_normalized_dict()
+                gh = pd.DataFrame(nd.get("GameHeader", []))
+                ls = pd.DataFrame(nd.get("LineScore", []))
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                tries += 1
+                time.sleep(3)
         games = []
         if not gh.empty and not ls.empty:
             cgh = {c.upper(): c for c in gh.columns}
@@ -1008,11 +1091,22 @@ def api_scoreboard():
                     })
                 except Exception:
                     continue
-        payload = {"date": d, "games": games}
+        # Fallback to CDN if primary is empty or failed
+        if not games:
+            alt = _fallback_cdn(d)
+            if alt is not None:
+                payload = alt
+                _scoreboard_cache[d] = (now, payload)
+                return jsonify(payload)
+            # If CDN also fails, return a safe empty payload
+            payload = {"date": d, "games": []}
+        else:
+            payload = {"date": d, "games": games}
         _scoreboard_cache[d] = (now, payload)
         return jsonify(payload)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # As a last resort, return an empty shape to avoid client errors
+        return jsonify({"date": d, "games": [], "error": str(e)}), 200
 
 
 @app.route("/api/schedule")
