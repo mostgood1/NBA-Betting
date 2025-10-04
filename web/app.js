@@ -641,7 +641,7 @@ function renderDate(dateStr){
         }
       }
       const parts = [
-        `Odds${odds.bookmaker?` @ ${odds.bookmaker}`:''}`,
+        `Book${odds.bookmaker?` @ ${odds.bookmaker}`:''}`,
         mlLine,
         impLine,
         spreadLine,
@@ -1009,7 +1009,7 @@ function renderDate(dateStr){
       const pH = Number(pred.home_win_prob);
       const pickLbl = pH>=0.5 ? 'Home ML' : 'Away ML';
       const pct = (100*Math.max(pH,1-pH)).toFixed(1)+'%';
-      modelPickHtml = `<div class=\"row details small\"><div class=\"detail-col\"><div class=\"model-pill\">Model Pick: <strong>${pickLbl}</strong> · ${pct}</div></div></div>`;
+  modelPickHtml = `<div class=\"row details small\"><div class=\"detail-col\"><div class=\"model-pill\">Model Pick: <strong>${pickLbl}</strong> · ${pct}</div></div></div>`;
     }
 
     node.innerHTML = `
@@ -1018,7 +1018,7 @@ function renderDate(dateStr){
         ${venue ? `<div class=\"venue\">${venue}</div>` : ''}
         <div class="state">${statusLine}</div>
   <div class="period-pill"></div>
-  <div class="time-left">${''}</div>
+  <div class="time-left"></div>
   ${isFinal ? `<div class=\"result-badge\">${w}W-${l}L${psh>0?`-${psh}P`:''}</div>` : ''}
       </div>
       <div class="row matchup">

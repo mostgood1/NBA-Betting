@@ -14,7 +14,7 @@ header .last-updated { margin-left: auto; color: #9fb0ff; font-size: 12px; opaci
 .card.final-mixed { border-color: #6a5a1f; box-shadow: 0 0 0 1px rgba(106,90,31,0.5), 0 2px 10px rgba(0,0,0,0.35); }
 .card.final-push { border-color: #2a3a7a; box-shadow: 0 0 0 1px rgba(42,58,122,0.5), 0 2px 10px rgba(0,0,0,0.35); }
 .card.final-neutral { border-color: #2a3a7a; }
-.row.head { display: flex; gap: 10px; align-items: center; font-size: 13px; color: #9fb0ff; }
+.row.head { display: flex; gap: 8px; align-items: center; font-size: 13px; color: #9fb0ff; }
 .row.head .venue { background: #0f1530; border: 1px solid #25316a; padding: 2px 6px; border-radius: 6px; color: #c9d3ff; }
 .row.head .state { background: #162a11; border: 1px solid #2a6b1e; padding: 2px 6px; border-radius: 6px; color: #b7f3c7; font-weight: 700; }
 .row.head .state.crit { background: #3a1212; border-color: #7a1e1e; color: #ffb7b7; }
@@ -23,6 +23,7 @@ header .last-updated { margin-left: auto; color: #9fb0ff; font-size: 12px; opaci
 .row.head .period-pill.crit, .row.head .time-left.crit { background:#8b0000; color:#fff; }
 .row.head .period-pill.int { background:#444; color:#ffecb3; }
 .row.head .result-badge { margin-left: auto; background: #0f1530; border: 1px solid #2a3a7a; color: #d5dbff; padding: 2px 6px; border-radius: 999px; font-weight: 800; font-size: 11px; }
+.row.head .period-pill:empty, .row.head .time-left:empty { display: none; }
 .card.final-all-win .row.head .result-badge { background: #0f2d1b; border-color: #1e7a45; color: #a7f3c6; }
 .card.final-all-loss .row.head .result-badge { background: #3a1212; border-color: #7a1e1e; color: #ffb7b7; }
 .card.final-mixed .row.head .result-badge { background: #2a2310; border-color: #6a5a1f; color: #ffeaa7; }
@@ -38,12 +39,12 @@ header .last-updated { margin-left: auto; color: #9fb0ff; font-size: 12px; opaci
 .live-score { font-size: 24px; font-weight: 800; letter-spacing: 0.3px; }
 .sub { font-size: 12px; color: #9fb0ff; }
 .proj-score { font-size: 12px; color: #9fb0ff; }
-.row.chips { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.row.chips { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: -2px; }
 .row.details { display: flex; }
 .row.details .detail-col { display: grid; gap: 4px; }
 .row.details.small { font-size: 12px; color: #9fb0ff; }
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border-radius: 999px; background: #0f1530; border: 1px solid #25316a; font-size: 10px; white-space: normal; line-height: 1.2; }
-.chip.title { background: transparent; border-color: transparent; color: #9fb0ff; font-weight: 700; padding-left: 0; font-size: 10px; }
+.chip.title { background: transparent; border-color: transparent; color: #9fb0ff; font-weight: 700; padding-left: 0; font-size: 10px; letter-spacing: 0.2px; }
 .chip.positive { background: #0f2d1b; border-color: #1e7a45; color: #a7f3c6; }
 .chip.neutral { background: #161c3b; border-color: #2a3a7a; color: #d5dbff; }
 .chip.negative { background: #2a1620; border-color: #7a1e49; color: #ffd5e6; }
@@ -63,6 +64,7 @@ header .last-updated { margin-left: auto; color: #9fb0ff; font-size: 12px; opaci
 .rec-pill.bad { background: #3a1212; border: 1px solid #7a1e1e; color: #ffb7b7; }
 .rec-pill.push { background: #111834; border: 1px solid #2a3a7a; color: #cfe0ff; }
 .rec-conf { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 800; }
+.rec-conf:empty { display: none; }
 .rec-conf.high { background: #1a6b3a; color: #d9ffe9; }
 .rec-conf.medium { background: #6a5a1f; color: #ffeaa7; }
 .rec-conf.low { background: #2a376d; color: #dfe6ff; }
@@ -113,6 +115,9 @@ footer { background: transparent; border-top: 1px solid #25316a; margin-top: 8px
 .badge.ok { background: #2a2310; border-color: #6a5a1f; color: #ffeaa7; }
 .badge.bad { background: #3a1212; border-color: #7a1e1e; color: #ffb7b7; }
 .subtle { color: #9fb0ff; font-size: 12px; opacity: 0.95; }
+
+/* Utility */
+.hidden { display: none !important; }
 
 /* A11y utility */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
