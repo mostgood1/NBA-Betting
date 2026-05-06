@@ -1,3 +1,3 @@
 date,commence_time,home_team,visitor_team,home_ml,away_ml,home_spread,away_spread,home_spread_price,away_spread_price,total,total_over_price,total_under_price,books_count,books_h2h,books_spreads,books_totals,bookmaker
-2026-05-06,2026-05-07T01:40:00Z,San Antonio Spurs,Minnesota Timberwolves,-315.32755483438706,315.3275548343871,-9.5,9.5,-105,-115,215.5,-100.0,-100.0,10,10,9,5,oddsapi_consensus
-2026-05-06,2026-05-06T23:10:00Z,New York Knicks,Philadelphia 76ers,-235.89849320296895,235.8984932029691,-7.0,7.0,-115,-105,215.0,-100.0,-100.0,10,10,7,5,oddsapi_consensus
+2026-05-06,2026-05-07T01:40:00Z,San Antonio Spurs,Minnesota Timberwolves,-339.0328181995246,339.0328181995246,-10.0,10.0,-115,-105,215.5,101.00470951154891,-101.00470951154891,11,11,8,9,oddsapi_consensus
+2026-05-06,2026-05-06T23:10:00Z,New York Knicks,Philadelphia 76ers,-251.7437452901879,251.74374529018783,-7.5,7.5,-115,-105,215.5,100.18997592055206,-100.18997592055206,11,11,9,9,oddsapi_consensus
