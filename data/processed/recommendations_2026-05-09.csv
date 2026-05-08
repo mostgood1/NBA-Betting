@@ -1,0 +1,3 @@
+market,side,home,away,date,ev,price,implied_prob,edge,line,pred_margin,market_home_margin,pred_total,tier
+ATS,Los Angeles Lakers,Los Angeles Lakers,Oklahoma City Thunder,2026-05-09,0.22306246817612996,-110.0,0.5238095238095238,4.322417857906515,8.5,-4.177582142093485,-8.5,,High
+TOTAL,Over,Los Angeles Lakers,Oklahoma City Thunder,2026-05-09,0.6405443712405914,-100.0,0.5,14.662445975802854,212.0,,,226.66244597580285,High
