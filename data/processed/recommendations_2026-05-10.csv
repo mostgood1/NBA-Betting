@@ -1,0 +1,4 @@
+market,side,home,away,date,ev,price,implied_prob,edge,line,pred_margin,market_home_margin,pred_total,tier
+ML,New York Knicks,Philadelphia 76ers,New York Knicks,2026-05-10,0.07083689422533757,-106.73154040328724,0.5162808741959634,,,,,,High
+ATS,New York Knicks,Philadelphia 76ers,New York Knicks,2026-05-10,0.16996494998965145,-145.0,0.5918367346938775,-6.032940656231243,-1.5,-7.532940656231243,-1.5,,High
+TOTAL,Over,Philadelphia 76ers,New York Knicks,2026-05-10,0.37169699388376143,100.12730744748568,0.49968193384223913,7.726200694911597,212.5,,,220.2262006949116,High
