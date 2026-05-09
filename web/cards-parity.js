@@ -73,6 +73,32 @@
   }
 
   function getLocalDateISO() {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        hour12: false,
+      });
+      const parts = formatter.formatToParts(new Date());
+      const partMap = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+      const year = Number(partMap.year);
+      const month = Number(partMap.month);
+      const day = Number(partMap.day);
+      const hour = Number(partMap.hour);
+      if (Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day) && Number.isFinite(hour)) {
+        const base = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+        if (hour < 6) {
+          base.setUTCDate(base.getUTCDate() - 1);
+        }
+        return base.toISOString().slice(0, 10);
+      }
+    } catch (_error) {
+      // Fall through to browser-local fallback.
+    }
+
     const now = new Date();
     const offsetMs = now.getTimezoneOffset() * 60000;
     return new Date(now.getTime() - offsetMs).toISOString().slice(0, 10);
