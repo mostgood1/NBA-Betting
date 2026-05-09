@@ -115,14 +115,21 @@ def _prep_recon_props(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _load_recon_lookup(date_str: str) -> dict[tuple[str, str], dict[str, Any]]:
-    path = PROCESSED / f"recon_props_{date_str}.csv"
-    if not path.exists():
-        return {}
-    try:
-        frame = pd.read_csv(path)
-    except Exception:
-        return {}
-    prepared = _prep_recon_props(frame)
+    candidates = [
+        PROCESSED / f"recon_props_{date_str}.csv",
+        PROCESSED / f"props_actuals_{date_str}.csv",
+    ]
+    prepared = pd.DataFrame()
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            frame = pd.read_csv(path)
+        except Exception:
+            continue
+        prepared = _prep_recon_props(frame)
+        if not prepared.empty:
+            break
     if prepared.empty:
         return {}
     lookup: dict[tuple[str, str], dict[str, Any]] = {}

@@ -2721,7 +2721,7 @@ def _live_sim_matchups_for_date(date_str: str) -> list[dict[str, Any]]:
 def _live_player_prop_lens_weights(is_postseason: Any) -> tuple[float, float, str]:
     profile = "playoffs" if bool(is_postseason) else "regular_season"
     env_key = "LIVE_PLAYER_LENS_PROP_SHAPE_WEIGHT_PLAYOFFS" if bool(is_postseason) else "LIVE_PLAYER_LENS_PROP_SHAPE_WEIGHT_REGULAR"
-    default_shape = 0.08 if bool(is_postseason) else 0.16
+    default_shape = 0.12 if bool(is_postseason) else 0.16
     try:
         shape_weight = float(str(os.environ.get(env_key, default_shape)).strip())
     except Exception:
@@ -39249,6 +39249,30 @@ def api_live_player_lens():
                                         3,
                                     )
                                     live_rank_probability = round(float(recommendation_priority_score) / 100.0, 6)
+
+                            if klass in {"BET", "WATCH"} and selected_side == "UNDER":
+                                try:
+                                    if bool(is_postseason):
+                                        default_watch_shape = 56.0
+                                        default_bet_shape = 64.0
+                                    else:
+                                        default_watch_shape = 50.0
+                                        default_bet_shape = 58.0
+                                    under_watch_min_shape = float(str(os.environ.get("LIVE_PLAYER_LENS_UNDER_WATCH_MIN_SHAPE", default_watch_shape)).strip())
+                                    under_bet_min_shape = float(str(os.environ.get("LIVE_PLAYER_LENS_UNDER_BET_MIN_SHAPE", default_bet_shape)).strip())
+                                except Exception:
+                                    under_watch_min_shape = 56.0 if bool(is_postseason) else 50.0
+                                    under_bet_min_shape = 64.0 if bool(is_postseason) else 58.0
+                                if under_bet_min_shape < under_watch_min_shape:
+                                    under_bet_min_shape = under_watch_min_shape
+                                live_shape_value = _safe_float(live_shape_score)
+                                if live_shape_value is not None:
+                                    if klass == "BET" and float(live_shape_value) < float(under_bet_min_shape):
+                                        klass = "WATCH" if float(live_shape_value) >= float(under_watch_min_shape) else "NONE"
+                                        bettable_reasons.append("under_shape_gated")
+                                    elif klass == "WATCH" and float(live_shape_value) < float(under_watch_min_shape):
+                                        klass = "NONE"
+                                        bettable_reasons.append("under_shape_gated")
                         except Exception:
                             live_rank_probability = None
                             recommendation_priority_score = None
@@ -39780,6 +39804,12 @@ def api_live_lens_tuning():
                 # Client ramps this in with elapsed time to avoid early-game overreaction.
                 "bias_points": 0.0,
                 "bias_cap_points": 8.0,
+                # Block obviously pathological full-game total signals before they can
+                # become recommendations; this protects live cards while we retune the
+                # upstream playoff total projection path.
+                "anomaly_min_elapsed_min": 6.0,
+                "anomaly_abs_edge_cap_points": 18.0,
+                "anomaly_under_only": True,
             },
             # Used by client-side computeScope() for Q/1H/G interval-smart possession blending.
             # min_elapsed_min is interpreted as a FULL-GAME knob and is scaled by scope length.

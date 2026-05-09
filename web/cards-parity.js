@@ -1150,26 +1150,42 @@
         }
       }
 
-      const side = edge > 1 ? 'Over' : (edge < -1 ? 'Under' : 'No edge');
       const totalAdjCfg = thresholds.adjustments?.game_total || {};
       const lateElapsedMin = Number(totalAdjCfg?.late_elapsed_min);
       const lateWatchMult = Number(totalAdjCfg?.late_watch_multiplier);
       const lateBetMult = Number(totalAdjCfg?.late_bet_multiplier);
+      const anomalyMinElapsed = Number(totalAdjCfg?.anomaly_min_elapsed_min);
+      const anomalyAbsEdgeCap = Number(totalAdjCfg?.anomaly_abs_edge_cap_points);
+      const anomalyUnderOnly = totalAdjCfg?.anomaly_under_only !== false;
+      const totalEdgeAnomaly = Number.isFinite(anomalyAbsEdgeCap)
+        && anomalyAbsEdgeCap > 0
+        && (!Number.isFinite(anomalyMinElapsed) || elapsedForRate >= anomalyMinElapsed)
+        && Math.abs(edge) > anomalyAbsEdgeCap
+        && (!anomalyUnderOnly || edge < 0);
+      const side = totalEdgeAnomaly
+        ? 'No edge'
+        : (edge > 1 ? 'Over' : (edge < -1 ? 'Under' : 'No edge'));
       const totalWatchThreshold = Number.isFinite(lateElapsedMin) && elapsedForRate >= lateElapsedMin
         ? thresholds.total.watch * (Number.isFinite(lateWatchMult) && lateWatchMult > 0 ? lateWatchMult : 1)
         : thresholds.total.watch;
       const totalBetThreshold = Number.isFinite(lateElapsedMin) && elapsedForRate >= lateElapsedMin
         ? thresholds.total.bet * (Number.isFinite(lateBetMult) && lateBetMult > 0 ? lateBetMult : 1)
         : thresholds.total.bet;
-      const klass = Number.isFinite(totalGate) && elapsedForRate < totalGate
-        ? 'WAIT'
-        : classifyLens(Math.abs(edge), totalWatchThreshold, totalBetThreshold);
+      const klass = totalEdgeAnomaly
+        ? 'NONE'
+        : (Number.isFinite(totalGate) && elapsedForRate < totalGate
+          ? 'WAIT'
+          : classifyLens(Math.abs(edge), totalWatchThreshold, totalBetThreshold));
       const priorDetail = Number.isFinite(pregameTotal) ? `Prior ${fmtNumber(pregameTotal, 1)}` : null;
       const endgameDetail = inEndgameWindow
         ? `Endgame ${fmtSigned(endgameAdj - endgameReversion, 1)}`
         : null;
-      totalSignal = buildSignal('total', 'G', klass, side, edge, lineTotal, projection, [priorDetail, `Total ${fmtInteger(currentTotal)}`, endgameDetail].filter(Boolean).join(' · '));
+      const anomalyDetail = totalEdgeAnomaly
+        ? `Blocked anomaly ${fmtSigned(edge, 1)} vs cap ${fmtNumber(anomalyAbsEdgeCap, 1)}`
+        : null;
+      totalSignal = buildSignal('total', 'G', klass, side, edge, lineTotal, projection, [priorDetail, `Total ${fmtInteger(currentTotal)}`, endgameDetail, anomalyDetail].filter(Boolean).join(' · '));
       totalSignal.score = signalScore(Math.abs(edge), totalBetThreshold);
+      totalSignal.edgeAnomaly = totalEdgeAnomaly;
 
       const totalShapeReasons = [];
       let totalShapeScore = 0;
