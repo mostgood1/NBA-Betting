@@ -37347,12 +37347,30 @@ def api_live_player_lens():
             _src, sb_games = _live_build_scoreboard_games(d)
             inferred = []
             for g in sb_games or []:
+                try:
+                    if not bool(g.get("in_progress")) or bool(g.get("final")):
+                        continue
+                except Exception:
+                    continue
                 eid = str(g.get("espn_event_id") or g.get("game_id") or "").strip()
                 if eid:
                     inferred.append(eid)
             event_ids = inferred
         except Exception:
             event_ids = []
+
+        # Date-only callers are the lightweight "live fallback" path. If there are
+        # no active live events, return an empty success payload instead of inferring
+        # finals/scheduled games and building a full-slate lens response.
+        if not event_ids:
+            payload = {
+                "ok": True,
+                "ttl": ttl,
+                "date": d or None,
+                "games": [],
+                "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            }
+            return jsonify(payload)
     else:
         event_ids = [x.strip() for x in event_ids_raw.split(",") if x.strip()]
     if not event_ids:

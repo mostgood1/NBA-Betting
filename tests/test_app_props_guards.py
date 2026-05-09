@@ -1455,6 +1455,30 @@ def test_api_live_player_lens_blends_adjusted_pregame_prior_into_player_projecti
     assert pts_row["pregame_margin_blended"] > 0.0
 
 
+def test_api_live_player_lens_date_only_returns_empty_payload_when_no_live_events(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "_live_build_scoreboard_games",
+        lambda _date: (
+            "espn",
+            [
+                {"espn_event_id": "evt-final", "in_progress": False, "final": True},
+                {"espn_event_id": "evt-scheduled", "in_progress": False, "final": False},
+            ],
+        ),
+    )
+
+    app_module._live_player_lens_multi_cache.clear()
+
+    with app_module.app.test_request_context("/api/live_player_lens?date=2026-03-30"):
+        response = app_module.api_live_player_lens()
+
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["date"] == "2026-03-30"
+    assert payload["games"] == []
+
+
 def test_api_live_player_props_projection_audit_scores_adjusted_rows(tmp_path, monkeypatch):
     processed = tmp_path / "data" / "processed"
     processed.mkdir(parents=True)
