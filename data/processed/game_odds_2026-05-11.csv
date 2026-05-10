@@ -1,0 +1,3 @@
+date,commence_time,home_team,visitor_team,home_ml,away_ml,home_spread,away_spread,home_spread_price,away_spread_price,total,total_over_price,total_under_price,books_count,books_h2h,books_spreads,books_totals,bookmaker
+2026-05-11,2026-05-12T02:40:00Z,Los Angeles Lakers,Oklahoma City Thunder,410.29343802906675,-410.2934380290668,11.0,-11.0,-115,-105,214.5,103.23585737169306,-103.23585737169306,10,10,5,4,oddsapi_consensus
+2026-05-11,2026-05-12T00:00:00Z,Cleveland Cavaliers,Detroit Pistons,-147.50102057235313,147.50102057235316,-3.5,3.5,-250,185,212.5,102.10171445473819,-102.10171445473813,10,10,9,5,oddsapi_consensus
