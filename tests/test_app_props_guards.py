@@ -1763,6 +1763,73 @@ def test_api_live_player_props_projection_audit_backfills_missing_recon_props(tm
     assert payload["overall"]["mae_adjusted"] == 0.5
 
 
+def test_load_recon_props_frame_backfills_from_live_lens_artifacts(tmp_path, monkeypatch):
+    processed = tmp_path / "data" / "processed"
+    processed.mkdir(parents=True)
+
+    (processed / "live_lens_projections_2026-03-31.jsonl").write_text(
+        json.dumps(
+            {
+                "date": "2026-03-31",
+                "market": "player_prop",
+                "game_id": "0000000003",
+                "player": "Devin Booker",
+                "name_key": "DEVIN BOOKER",
+                "stat": "pts",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(app_module, "DATA_PROCESSED_DIR", processed)
+    monkeypatch.setenv("NBA_LIVE_LENS_DIR", str(processed))
+    app_module._load_recon_props_frame.cache_clear()
+    app_module._load_recon_props_lookup.cache_clear()
+
+    import nba_betting.props_actuals as props_actuals_module
+
+    monkeypatch.setattr(props_actuals_module, "fetch_prop_actuals_via_nba_cdn", lambda _date: pd.DataFrame())
+    monkeypatch.setattr(props_actuals_module, "fetch_prop_actuals_via_nbaapi", lambda _date: pd.DataFrame())
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "game": {
+                    "homeTeam": {
+                        "teamTricode": "PHX",
+                        "players": [
+                            {
+                                "personId": 1626164,
+                                "name": "Devin Booker",
+                                "statistics": {
+                                    "points": 27,
+                                    "reboundsTotal": 4,
+                                    "assists": 6,
+                                    "threePointersMade": 3,
+                                    "steals": 1,
+                                    "blocks": 0,
+                                    "turnovers": 2,
+                                },
+                            }
+                        ],
+                    },
+                    "awayTeam": {"teamTricode": "UTA", "players": []},
+                }
+            }
+
+    monkeypatch.setattr(app_module.requests, "get", lambda *args, **kwargs: _Resp())
+
+    df, source_name = app_module._load_recon_props_frame("2026-03-31")
+
+    assert source_name == "recon_props_2026-03-31.csv"
+    assert len(df) == 1
+    assert df.iloc[0]["player_name"] == "Devin Booker"
+    assert (processed / "recon_props_2026-03-31.csv").exists()
+
+
 def test_load_props_movement_callouts_exposes_player_id_photo_fallback(tmp_path, monkeypatch):
     processed = tmp_path / "data" / "processed"
     processed.mkdir(parents=True)

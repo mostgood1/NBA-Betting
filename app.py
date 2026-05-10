@@ -14962,6 +14962,8 @@ def _load_recon_props_frame(date_str: str) -> tuple[pd.DataFrame, str | None]:
 
 
 def _maybe_backfill_recon_props_frame(date_str: str) -> tuple[pd.DataFrame, str | None]:
+    from datetime import date as _date
+
     try:
         target_date = pd.to_datetime(date_str, errors="coerce")
     except Exception:
@@ -14990,6 +14992,12 @@ def _maybe_backfill_recon_props_frame(date_str: str) -> tuple[pd.DataFrame, str 
     if df is None or df.empty:
         try:
             df = fetch_prop_actuals_via_nbaapi(str(target_date.date().isoformat()))
+        except Exception:
+            df = pd.DataFrame()
+
+    if df is None or df.empty:
+        try:
+            df = _backfill_recon_props_from_live_lens_artifacts(str(target_date.date().isoformat()))
         except Exception:
             df = pd.DataFrame()
 
@@ -15023,6 +15031,109 @@ def _maybe_backfill_recon_props_frame(date_str: str) -> tuple[pd.DataFrame, str 
         return out_small, out_csv.name
     except Exception:
         return pd.DataFrame(), None
+
+
+def _backfill_recon_props_from_live_lens_artifacts(date_str: str) -> pd.DataFrame:
+    def _canon_gid(raw: Any) -> str:
+        try:
+            digits = "".join(ch for ch in str(raw or "") if ch.isdigit())
+            if not digits:
+                return ""
+            if len(digits) < 10:
+                digits = digits.zfill(10)
+            return digits
+        except Exception:
+            return ""
+
+    artifact_dir = _live_lens_artifacts_dir()
+    gids: set[str] = set()
+    for name in (f"live_lens_projections_{date_str}.jsonl", f"live_lens_signals_{date_str}.jsonl"):
+        path = artifact_dir / name
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = str(line or "").strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    if not isinstance(obj, dict):
+                        continue
+                    if str(obj.get("market") or "").strip().lower() != "player_prop":
+                        continue
+                    gid = _canon_gid(obj.get("game_id_canon") or obj.get("game_id"))
+                    if gid:
+                        gids.add(gid)
+        except Exception:
+            continue
+
+    if not gids:
+        return pd.DataFrame()
+
+    rows: list[dict[str, Any]] = []
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for gid in sorted(gids):
+        try:
+            url = f"https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{gid}.json"
+            resp = requests.get(url, headers=headers, timeout=30)
+            if int(resp.status_code) != 200:
+                continue
+            js = resp.json()
+        except Exception:
+            continue
+        game = (js or {}).get("game") or {}
+        for side in ("homeTeam", "awayTeam"):
+            team_obj = game.get(side) or {}
+            tri = str(team_obj.get("teamTricode") or "").strip().upper() or None
+            for player_obj in (team_obj.get("players") or []):
+                try:
+                    stats = player_obj.get("statistics") or {}
+                    pts = _safe_float(stats.get("points"))
+                    reb = _safe_float(stats.get("reboundsTotal"))
+                    ast = _safe_float(stats.get("assists"))
+                    threes = _safe_float(stats.get("threePointersMade"))
+                    stl = _safe_float(stats.get("steals"))
+                    blk = _safe_float(stats.get("blocks"))
+                    tov = _safe_float(stats.get("turnovers"))
+                    if all(v in (None, 0, 0.0) for v in (pts, reb, ast, threes, stl, blk, tov)):
+                        continue
+                    pra = None
+                    if pts is not None and reb is not None and ast is not None:
+                        pra = float(pts + reb + ast)
+                    rows.append(
+                        {
+                            "date": date_str,
+                            "game_id": gid,
+                            "player_id": _safe_int(player_obj.get("personId")),
+                            "player_name": str(player_obj.get("name") or player_obj.get("nameI") or "").strip(),
+                            "team_abbr": tri,
+                            "pts": pts,
+                            "reb": reb,
+                            "ast": ast,
+                            "threes": threes,
+                            "stl": stl,
+                            "blk": blk,
+                            "tov": tov,
+                            "pra": pra,
+                        }
+                    )
+                except Exception:
+                    continue
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    try:
+        if all(col in df.columns for col in ("game_id", "player_id")):
+            df = df.drop_duplicates(subset=["game_id", "player_id"], keep="last")
+    except Exception:
+        pass
+    return df
 
 
 @lru_cache(maxsize=16)
