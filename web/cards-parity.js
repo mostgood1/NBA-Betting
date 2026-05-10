@@ -802,6 +802,20 @@
     return signal;
   }
 
+  function signalConfidenceMeta(shapeScore) {
+    const value = Number(shapeScore);
+    if (!Number.isFinite(value) || value <= 0) {
+      return null;
+    }
+    if (value >= 0.3) {
+      return { label: 'High confidence', tone: 'high' };
+    }
+    if (value >= 0.16) {
+      return { label: 'Solid support', tone: 'medium' };
+    }
+    return { label: 'Thin support', tone: 'low' };
+  }
+
   function compactSignalSelection(signals) {
     const ranked = rankSignals(signals).filter((signal) => signal?.klass === 'BET' || signal?.klass === 'WATCH');
     if (!ranked.length) {
@@ -2088,6 +2102,60 @@
     return `<span class="${liveSignalChipClass(signal)}" title="${escapeHtml(signal.detail || signal.compactLabel || '')}">${escapeHtml(signal.compactLabel || signal.label || 'Signal')}</span>`;
   }
 
+  function renderLiveSignalDrivers(signal) {
+    if (!signal) {
+      return '';
+    }
+    const entries = [];
+    if (signal.key === 'ml') {
+      const modelProb = Number(signal.projection);
+      if (Number.isFinite(modelProb)) {
+        entries.push({ label: 'Model', value: fmtPercent(modelProb, 0) });
+      }
+      const marketPrice = Number(signal.line);
+      if (Number.isFinite(marketPrice)) {
+        entries.push({ label: 'Price', value: fmtAmerican(marketPrice) });
+      }
+    } else {
+      const projection = Number(signal.projection);
+      const line = Number(signal.line);
+      if (Number.isFinite(projection)) {
+        entries.push({ label: 'Model', value: fmtNumber(projection, 1) });
+      }
+      if (Number.isFinite(line)) {
+        entries.push({ label: 'Line', value: fmtNumber(line, 1) });
+      }
+    }
+    if (!entries.length) {
+      return '';
+    }
+    return `
+      <div class="cards-live-lens-driver-row">
+        ${entries.map((entry) => `
+          <span class="cards-live-lens-driver-pill">
+            <span>${escapeHtml(entry.label)}</span>
+            <strong>${escapeHtml(entry.value)}</strong>
+          </span>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderLiveSignalReasons(signal) {
+    const reasons = safeArray(signal?.shapeReasons).slice(0, 3);
+    if (!reasons.length) {
+      return '';
+    }
+    return `
+      <div class="cards-live-lens-why">
+        <div class="cards-live-lens-why__label">Why</div>
+        <ul class="cards-live-lens-why__list">
+          ${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
   function renderLiveSignalTile(slot) {
     const signal = slot?.signal || null;
     const sliceLabel = String(slot?.sliceLabel || 'Signal');
@@ -2106,15 +2174,23 @@
       : fmtSigned(signal.edge, 1);
     const copyText = signal.shapeSummary || signal.detail || 'No live edge detail';
     const copyTitle = signal.detail || copyText;
+    const reasonMarkup = renderLiveSignalReasons(signal);
+    const driverMarkup = renderLiveSignalDrivers(signal);
+    const confidence = signalConfidenceMeta(signal.shapeScore);
     return `
       <div class="cards-live-lens-tile ${signal.klass === 'BET' ? 'is-bet' : (signal.klass === 'WATCH' ? 'is-watch' : '')}">
         <div class="cards-live-lens-tile__head">
           <div class="cards-market-kicker">${escapeHtml(`${sliceLabel} · ${marketLabel}`)}</div>
-          <span class="${liveSignalChipClass(signal)}">${escapeHtml(signal.klass)}</span>
+          <div class="cards-live-lens-badge-row">
+            ${confidence ? `<span class="cards-live-lens-confidence cards-live-lens-confidence--${escapeHtml(confidence.tone)}">${escapeHtml(confidence.label)}</span>` : ''}
+            <span class="${liveSignalChipClass(signal)}">${escapeHtml(signal.klass)}</span>
+          </div>
         </div>
         <div class="cards-market-main">${escapeHtml(signal.side || marketLabel)}</div>
         <div class="cards-live-lens-tile__edge">${escapeHtml(edgeText)}</div>
         <div class="cards-mini-copy" title="${escapeHtml(copyTitle)}">${escapeHtml(copyText)}</div>
+        ${driverMarkup}
+        ${reasonMarkup}
       </div>
     `;
   }
@@ -4252,12 +4328,32 @@
         ? `Proj ${fmtNumber(projection, 1)} vs ${fmtNumber(line, 1)}`
         : `Edge ${edgeText}`;
     }
+    const driverEntries = [];
+    if (marketType === 'moneyline') {
+      if (Number.isFinite(projection)) {
+        driverEntries.push({ label: 'Model', value: fmtPercent(projection, 0) });
+      }
+      if (Number.isFinite(line)) {
+        driverEntries.push({ label: 'Price', value: fmtAmerican(line) });
+      }
+    } else {
+      if (Number.isFinite(projection)) {
+        driverEntries.push({ label: 'Model', value: marketType === 'spread' ? fmtSigned(projection, 1) : fmtNumber(projection, 1) });
+      }
+      if (Number.isFinite(line)) {
+        driverEntries.push({ label: 'Line', value: marketType === 'spread' ? fmtSigned(line, 1) : fmtNumber(line, 1) });
+      }
+    }
     return {
       shortLabel,
       klass,
       main,
       sub,
       note: String(signal?.detail || '').trim(),
+      shapeSummary: String(signal?.shapeSummary || '').trim(),
+      shapeReasons: safeArray(signal?.shapeReasons).slice(0, 3),
+      shapeScore: Number(signal?.shapeScore),
+      driverEntries,
       edgeValue,
       edgeText,
       edgeClass,
@@ -4488,15 +4584,43 @@
       const tileClass = market?.klass === 'BET'
         ? 'is-bet'
         : (market?.klass === 'WATCH' ? 'is-watch' : (market?.isEmpty ? 'is-empty' : ''));
+      const confidence = signalConfidenceMeta(market?.shapeScore);
+      const driverMarkup = Array.isArray(market?.driverEntries) && market.driverEntries.length
+        ? `
+          <div class="cards-live-lens-driver-row cards-live-lens-driver-row--market">
+            ${market.driverEntries.map((entry) => `
+              <span class="cards-live-lens-driver-pill">
+                <span>${escapeHtml(entry.label)}</span>
+                <strong>${escapeHtml(entry.value)}</strong>
+              </span>
+            `).join('')}
+          </div>
+        `
+        : '';
+      const reasonMarkup = Array.isArray(market?.shapeReasons) && market.shapeReasons.length
+        ? `
+          <div class="cards-live-lens-why cards-live-lens-why--market">
+            <div class="cards-live-lens-why__label">Why</div>
+            <ul class="cards-live-lens-why__list">
+              ${market.shapeReasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join('')}
+            </ul>
+          </div>
+        `
+        : '';
       return `
         <div class="cards-market-tile ${tileClass}">
           <div class="cards-live-lens-tile__head">
             <div class="cards-market-kicker">${escapeHtml(market?.shortLabel || 'Market')}</div>
-            <span class="${badgeClass}">${escapeHtml(market?.klass || (market?.isEmpty ? 'Off card' : 'Live'))}</span>
+            <div class="cards-live-lens-badge-row">
+              ${confidence ? `<span class="cards-live-lens-confidence cards-live-lens-confidence--${escapeHtml(confidence.tone)}">${escapeHtml(confidence.label)}</span>` : ''}
+              <span class="${badgeClass}">${escapeHtml(market?.klass || (market?.isEmpty ? 'Off card' : 'Live'))}</span>
+            </div>
           </div>
           <div class="cards-market-main">${escapeHtml(market?.main || 'No surfaced bet')}</div>
           <div class="cards-market-sub ${escapeHtml(market?.edgeClass || '')}">${escapeHtml(market?.sub || 'No tracked edge.')}</div>
           ${market?.note ? `<div class="cards-market-note">${escapeHtml(market.note)}</div>` : ''}
+          ${driverMarkup}
+          ${reasonMarkup}
         </div>
       `;
     }

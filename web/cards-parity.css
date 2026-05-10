@@ -1830,11 +1830,109 @@ body[data-viewport='phone'] .cards-scoreboard {
   gap: 8px;
 }
 
+.cards-live-lens-badge-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .cards-live-lens-tile__edge {
   font-family: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
   font-size: 16px;
   font-weight: 700;
   line-height: 1;
+}
+
+.cards-live-lens-confidence {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(132, 166, 196, 0.16);
+  background: rgba(6, 16, 26, 0.42);
+  color: var(--cards-text-soft);
+  font-size: 9px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cards-live-lens-confidence--high {
+  border-color: rgba(104, 224, 162, 0.32);
+  color: #bff6d4;
+}
+
+.cards-live-lens-confidence--medium {
+  border-color: rgba(244, 191, 118, 0.28);
+  color: #ffe2b1;
+}
+
+.cards-live-lens-confidence--low {
+  border-color: rgba(132, 166, 196, 0.2);
+  color: var(--cards-text-dim);
+}
+
+.cards-live-lens-driver-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cards-live-lens-driver-row--market {
+  margin-top: 2px;
+}
+
+.cards-live-lens-driver-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(132, 166, 196, 0.16);
+  background: rgba(6, 16, 26, 0.42);
+  color: var(--cards-text-soft);
+  font-size: 10px;
+  line-height: 1.1;
+}
+
+.cards-live-lens-driver-pill strong {
+  color: var(--cards-text);
+  font-weight: 700;
+}
+
+.cards-live-lens-why {
+  display: grid;
+  gap: 5px;
+  padding-top: 2px;
+}
+
+.cards-live-lens-why--market {
+  margin-top: 2px;
+}
+
+.cards-live-lens-why__label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cards-accent-strong);
+}
+
+.cards-live-lens-why__list {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+  color: var(--cards-text-soft);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.cards-live-lens-why__list li::marker {
+  color: rgba(154, 243, 222, 0.72);
 }
 
 .cards-live-signal-row {
