@@ -1479,6 +1479,148 @@ def test_api_live_player_lens_date_only_returns_empty_payload_when_no_live_event
     assert payload["games"] == []
 
 
+def test_api_live_player_lens_uses_pbp_event_timing_for_live_prop_projection(monkeypatch):
+    nk = app_module._norm_player_name("Devin Booker")
+
+    monkeypatch.setattr(
+        app_module,
+        "_load_best_bets_game_context",
+        lambda _date: {"by_pair": {}},
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_live_build_scoreboard_games",
+        lambda _date: (
+            "espn",
+            [
+                {
+                    "espn_event_id": "evt-1",
+                    "game_id": "001",
+                    "home": "PHX",
+                    "away": "UTA",
+                    "period": 2,
+                    "clock": "06:00",
+                    "in_progress": True,
+                    "final": False,
+                    "home_pts": 55,
+                    "away_pts": 48,
+                }
+            ],
+        ),
+    )
+    monkeypatch.setattr(app_module, "_live_fetch_espn_summary", lambda _eid: {"ok": True})
+    monkeypatch.setattr(
+        app_module,
+        "_live_extract_player_boxscore_from_espn_summary",
+        lambda _summary: [
+            {
+                "team_tri": "PHX",
+                "player": "Devin Booker",
+                "player_id": 1626164,
+                "starter": True,
+                "mp": 12,
+                "pf": 1,
+                "pts": 10,
+                "reb": 2,
+                "ast": 3,
+                "threes_made": 2,
+                "stl": 1,
+                "blk": 0,
+                "tov": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(app_module, "_live_load_props_edges_index", lambda _date: {("PHX", nk, "pts"): 20.5})
+    monkeypatch.setattr(app_module, "_live_load_props_recommendations_line_index", lambda _date: {})
+    monkeypatch.setattr(app_module, "_live_load_props_predictions_index", lambda _date: {("PHX", nk): {"pred_pts": 20.0, "roll10_min": 36.0}})
+    monkeypatch.setattr(app_module, "_live_roster_pid_by_team_nk", lambda: {("PHX", nk): 1626164})
+    monkeypatch.setattr(app_module, "_live_oddsapi_player_props_for_game", lambda _date, _home, _away: {})
+    monkeypatch.setattr(app_module, "_live_load_smart_sim_by_game_id", lambda _date, _gid: {})
+    monkeypatch.setattr(app_module, "_live_append_snapshot", lambda *_args, **_kwargs: None)
+
+    def _fake_actions(_gid):
+        return [
+            {
+                "period": 1,
+                "clock": "11:30",
+                "teamTricode": "PHX",
+                "playerName": "Devin Booker",
+                "actionType": "Jump Shot",
+                "shotResult": "Made",
+                "isFieldGoal": 1,
+                "shotValue": 2,
+            },
+            {
+                "period": 1,
+                "clock": "08:00",
+                "teamTricode": "PHX",
+                "playerName": "Devin Booker",
+                "actionType": "Jump Shot",
+                "shotResult": "Made",
+                "isFieldGoal": 1,
+                "shotValue": 2,
+            },
+            {
+                "period": 1,
+                "clock": "06:00",
+                "teamTricode": "PHX",
+                "playerName": "Devin Booker",
+                "actionType": "Jump Shot",
+                "shotResult": "Made",
+                "isFieldGoal": 1,
+                "shotValue": 2,
+            },
+            {
+                "period": 2,
+                "clock": "08:20",
+                "teamTricode": "PHX",
+                "playerName": "Devin Booker",
+                "actionType": "Jump Shot",
+                "shotResult": "Made",
+                "isFieldGoal": 1,
+                "shotValue": 2,
+            },
+            {
+                "period": 2,
+                "clock": "07:45",
+                "teamTricode": "PHX",
+                "playerName": "Devin Booker",
+                "actionType": "Jump Shot",
+                "shotResult": "Made",
+                "isFieldGoal": 1,
+                "shotValue": 2,
+            },
+            {
+                "period": 2,
+                "clock": "07:00",
+                "teamTricode": "PHX",
+                "playerName": "Devin Booker",
+                "actionType": "Jump Shot",
+                "shotResult": "Made",
+                "isFieldGoal": 1,
+                "shotValue": 2,
+            },
+        ]
+
+    monkeypatch.setattr(app_module, "_live_fetch_pbp_actions", _fake_actions)
+
+    app_module._live_player_lens_multi_cache.clear()
+
+    with app_module.app.test_request_context("/api/live_player_lens?date=2026-03-30&event_ids=evt-1&recent_window_sec=180"):
+        response = app_module.api_live_player_lens()
+
+    payload = response.get_json()
+    pts_row = next(row for row in payload["games"][0]["rows"] if row["player"] == "Devin Booker" and row["stat"] == "pts")
+
+    assert pts_row["event_timing_mult"] is not None
+    assert pts_row["event_timing_mult"] > 1.0
+    assert pts_row["event_rate_recent"] > pts_row["event_rate_game"]
+    assert pts_row["points_rate_recent"] > pts_row["points_rate_game"]
+    assert pts_row["seconds_since_event"] == 60
+    assert pts_row["seconds_since_score"] == 60
+    assert pts_row["pace_proj"] > 30.0
+
+
 def test_api_live_player_props_projection_audit_scores_adjusted_rows(tmp_path, monkeypatch):
     processed = tmp_path / "data" / "processed"
     processed.mkdir(parents=True)
@@ -1775,21 +1917,17 @@ def test_cards_shell_routes_use_single_main_page():
     betting_card_response = client.get("/betting-card")
 
     assert root_response.status_code == 200
-    assert pregame_response.status_code == 200
-    assert live_response.status_code == 200
+    assert pregame_response.status_code == 404
+    assert live_response.status_code == 302
     assert betting_card_response.status_code == 302
 
     root_html = root_response.get_data(as_text=True)
-    pregame_html = pregame_response.get_data(as_text=True)
-    live_html = live_response.get_data(as_text=True)
 
-    assert 'data-page-mode="pregame"' in root_html
     assert 'NBA Game Cards' in root_html
-    assert 'id="cardsPregameLink"' in root_html
-    assert 'id="cardsLiveLink"' in root_html
-    assert 'data-page-mode="pregame"' in pregame_html
-    assert 'data-cards-base-path="/pregame"' in pregame_html
-    assert 'data-page-mode="live"' in live_html
-    assert 'data-cards-base-path="/live"' in live_html
-    assert 'id="cardsPropsStrip"' in root_html
+    assert 'data-cards-base-path="/"' in root_html
+    assert 'id="cardsPrevDateLink"' in root_html
+    assert 'id="cardsNextDateLink"' in root_html
+    assert 'id="cardsScoreboard"' in root_html
+    assert 'id="cardsGrid"' in root_html
+    assert live_response.headers["Location"].endswith("/")
     assert betting_card_response.headers["Location"].endswith("/")

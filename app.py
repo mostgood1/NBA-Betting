@@ -3871,6 +3871,184 @@ def _live_pbp_recent_player_usage(actions: list[dict[str, Any]], window_sec: int
     }
 
 
+def _live_pbp_recent_player_event_timing(
+    actions: list[dict[str, Any]],
+    window_sec: int = 180,
+    current_elapsed_reg_sec: int | float | None = None,
+) -> dict[str, Any]:
+    """Compute recent-vs-game player event timing from regulation PBP.
+
+    This is intentionally lightweight: it captures how frequently a player is
+    generating shot/free-throw events and how long it has been since their last
+    event/score. The live player lens can then react to hot or cold event timing
+    without requiring full event-by-event replay modelling.
+    """
+    try:
+        w = int(max(10, min(600, int(window_sec or 180))))
+    except Exception:
+        w = 180
+
+    def _elapsed_reg_sec(a: dict[str, Any]) -> int | None:
+        try:
+            per = _safe_int(a.get("period"))
+            if per is None or per < 1 or per > 4:
+                return None
+            sec_left = _live_parse_clock_to_sec_left(a.get("clock") or a.get("timeRemaining"))
+            if sec_left is None:
+                return None
+            sec_left = int(max(0, min(12 * 60, sec_left)))
+            elapsed = int((per - 1) * (12 * 60) + ((12 * 60) - sec_left))
+            return int(max(0, min(48 * 60, elapsed)))
+        except Exception:
+            return None
+
+    def _init(team_tri: str | None) -> dict[str, Any]:
+        return {
+            "team_tri": team_tri,
+            "event_count": 0,
+            "shot_events": 0,
+            "scoring_events": 0,
+            "points_from_events": 0,
+            "fg3a": 0,
+            "last_event_elapsed": None,
+            "last_score_elapsed": None,
+            "seconds_since_event": None,
+            "seconds_since_score": None,
+            "event_rate_per_min": None,
+            "shot_rate_per_min": None,
+            "score_rate_per_min": None,
+            "points_rate_per_min": None,
+            "fg3a_rate_per_min": None,
+        }
+
+    def _touch(d: dict[str, Any], tri: str | None) -> dict[str, Any]:
+        if d.get("team_tri") is None and tri:
+            d["team_tri"] = tri
+        return d
+
+    def _finalize(bucket: dict[str, dict[str, Any]], *, latest_elapsed: int, minutes_span: float) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        mins = float(max(0.25, minutes_span))
+        for nk, raw in (bucket or {}).items():
+            if not isinstance(raw, dict):
+                continue
+            row = dict(raw)
+            try:
+                last_event_elapsed = _safe_int(row.get("last_event_elapsed"))
+                if last_event_elapsed is not None:
+                    row["seconds_since_event"] = int(max(0, int(latest_elapsed) - int(last_event_elapsed)))
+            except Exception:
+                row["seconds_since_event"] = None
+            try:
+                last_score_elapsed = _safe_int(row.get("last_score_elapsed"))
+                if last_score_elapsed is not None:
+                    row["seconds_since_score"] = int(max(0, int(latest_elapsed) - int(last_score_elapsed)))
+            except Exception:
+                row["seconds_since_score"] = None
+            try:
+                row["event_rate_per_min"] = float(row.get("event_count") or 0) / mins
+                row["shot_rate_per_min"] = float(row.get("shot_events") or 0) / mins
+                row["score_rate_per_min"] = float(row.get("scoring_events") or 0) / mins
+                row["points_rate_per_min"] = float(row.get("points_from_events") or 0) / mins
+                row["fg3a_rate_per_min"] = float(row.get("fg3a") or 0) / mins
+            except Exception:
+                pass
+            out[nk] = row
+        return out
+
+    acts = actions or []
+    if not acts:
+        return {"window_sec": w, "latest_elapsed_reg_sec": None, "cutoff_elapsed_reg_sec": None, "recent": {}, "game": {}}
+
+    latest = None
+    for a in acts:
+        e = _elapsed_reg_sec(a) if isinstance(a, dict) else None
+        if e is None:
+            continue
+        if latest is None or int(e) > int(latest):
+            latest = int(e)
+    if latest is None:
+        return {"window_sec": w, "latest_elapsed_reg_sec": None, "cutoff_elapsed_reg_sec": None, "recent": {}, "game": {}}
+
+    try:
+        current_elapsed = _safe_float(current_elapsed_reg_sec)
+        if current_elapsed is not None:
+            current_elapsed = float(max(0.0, min(48.0 * 60.0, current_elapsed)))
+            if float(current_elapsed) >= float(latest):
+                latest = int(round(float(current_elapsed)))
+    except Exception:
+        pass
+
+    cutoff = int(max(0, int(latest) - int(w)))
+    recent: dict[str, dict[str, Any]] = {}
+    game: dict[str, dict[str, Any]] = {}
+
+    for a in acts:
+        if not isinstance(a, dict):
+            continue
+        e = _elapsed_reg_sec(a)
+        if e is None:
+            continue
+        tri = str(a.get("teamTricode") or "").upper().strip() or None
+        pname = str(a.get("playerName") or a.get("playerNameI") or "").strip()
+        if not pname:
+            continue
+        nk = _norm_player_name(pname)
+        if not nk:
+            continue
+
+        a_type = str(a.get("actionType") or "").lower()
+        shot_res = str(a.get("shotResult") or "").lower()
+        is_made = (shot_res == "made")
+        is_fg = a.get("isFieldGoal")
+        try:
+            is_fg = bool(int(is_fg))
+        except Exception:
+            is_fg = bool(is_fg)
+        is_ft = "free throw" in a_type
+        if not is_fg and not is_ft:
+            continue
+
+        try:
+            shot_val = int(a.get("shotValue") or 0)
+        except Exception:
+            shot_val = 0
+        scoring_points = 0
+        if is_fg and is_made:
+            scoring_points = int(max(0, shot_val))
+        elif is_ft and is_made:
+            scoring_points = 1
+
+        def _apply(dest: dict[str, dict[str, Any]]) -> None:
+            d0 = dest.get(nk)
+            if not isinstance(d0, dict):
+                d0 = _init(tri)
+            d0 = _touch(d0, tri)
+            d0["event_count"] = int(d0.get("event_count") or 0) + 1
+            d0["last_event_elapsed"] = int(e)
+            if is_fg:
+                d0["shot_events"] = int(d0.get("shot_events") or 0) + 1
+                if shot_val == 3:
+                    d0["fg3a"] = int(d0.get("fg3a") or 0) + 1
+            if scoring_points > 0:
+                d0["scoring_events"] = int(d0.get("scoring_events") or 0) + 1
+                d0["points_from_events"] = int(d0.get("points_from_events") or 0) + int(scoring_points)
+                d0["last_score_elapsed"] = int(e)
+            dest[nk] = d0
+
+        _apply(game)
+        if int(e) >= cutoff and int(e) <= int(latest):
+            _apply(recent)
+
+    return {
+        "window_sec": int(w),
+        "latest_elapsed_reg_sec": int(latest),
+        "cutoff_elapsed_reg_sec": int(cutoff),
+        "recent": _finalize(recent, latest_elapsed=int(latest), minutes_span=float(max(0.25, float(w) / 60.0))),
+        "game": _finalize(game, latest_elapsed=int(latest), minutes_span=float(max(1.0, float(latest) / 60.0))),
+    }
+
+
 def _live_pbp_rotation_state(actions: list[dict[str, Any]], starters_by_team: dict[str, set[str]] | None = None) -> dict[str, Any]:
     """Derive a lightweight on/off + stint/rest summary from NBA-CDN play-by-play.
 
@@ -4168,7 +4346,6 @@ def _enforce_minimal_ui_allowlist():
         # Exact pages
         allowed_exact = {
             "/",
-            "/pregame",
             "/live",
             "/betting-card",
             "/betting-recap",
@@ -8912,11 +9089,6 @@ def root():
         heading="NBA Game Cards",
         base_path="/",
     )
-
-
-@app.route("/pregame")
-def route_pregame():
-    return _redirect_with_request_params("/")
 
 
 @app.route("/live")
@@ -37700,6 +37872,15 @@ def api_live_player_lens():
             "lens_profile": row.get("lens_profile"),
             "lens_base_weight": row.get("lens_base_weight"),
             "lens_shape_weight": row.get("lens_shape_weight"),
+            "event_timing_mult": row.get("event_timing_mult"),
+            "event_rate_recent": row.get("event_rate_recent"),
+            "event_rate_game": row.get("event_rate_game"),
+            "score_rate_recent": row.get("score_rate_recent"),
+            "score_rate_game": row.get("score_rate_game"),
+            "points_rate_recent": row.get("points_rate_recent"),
+            "points_rate_game": row.get("points_rate_game"),
+            "seconds_since_event": row.get("seconds_since_event"),
+            "seconds_since_score": row.get("seconds_since_score"),
             "first_seen_at": row.get("first_seen_at"),
             "last_seen_at": row.get("last_seen_at"),
             "seen_observations": row.get("seen_observations"),
@@ -38089,6 +38270,8 @@ def api_live_player_lens():
         # Pull play-by-play actions once per game id to compute usage proxies (best-effort).
         usage_recent: dict[str, dict[str, Any]] = {}
         usage_game: dict[str, dict[str, Any]] = {}
+        timing_recent: dict[str, dict[str, Any]] = {}
+        timing_game: dict[str, dict[str, Any]] = {}
         team_recent_usg: dict[str, float] = {}
         team_game_usg: dict[str, float] = {}
         team_recent_3a: dict[str, float] = {}
@@ -38098,10 +38281,19 @@ def api_live_player_lens():
             if gid and in_progress and not is_final:
                 actions = _live_fetch_pbp_actions(str(gid))
                 u = _live_pbp_recent_player_usage(actions, window_sec=recent_window_sec) if actions else None
+                t = _live_pbp_recent_player_event_timing(
+                    actions,
+                    window_sec=recent_window_sec,
+                    current_elapsed_reg_sec=(float(elapsed_min) * 60.0) if elapsed_min is not None else None,
+                ) if actions else None
                 if isinstance(u, dict):
                     usage_recent = u.get("recent") if isinstance(u.get("recent"), dict) else {}
                     usage_game = u.get("game") if isinstance(u.get("game"), dict) else {}
+                if isinstance(t, dict):
+                    timing_recent = t.get("recent") if isinstance(t.get("recent"), dict) else {}
+                    timing_game = t.get("game") if isinstance(t.get("game"), dict) else {}
 
+                if isinstance(u, dict):
                     try:
                         rot = _live_pbp_rotation_state(actions, starters_by_team=starters_by_team) if actions else None
                         if isinstance(rot, dict):
@@ -38137,6 +38329,8 @@ def api_live_player_lens():
         except Exception:
             usage_recent = {}
             usage_game = {}
+            timing_recent = {}
+            timing_game = {}
 
         rows: list[dict[str, Any]] = []
         for p in players or []:
@@ -38669,6 +38863,15 @@ def api_live_player_lens():
                         hot_ppp_game = None
                         hot_p3_recent = None
                         hot_p3_game = None
+                        event_timing_mult_used = None
+                        event_rate_recent0 = None
+                        event_rate_game0 = None
+                        score_rate_recent0 = None
+                        score_rate_game0 = None
+                        points_rate_recent0 = None
+                        points_rate_game0 = None
+                        seconds_since_event0 = None
+                        seconds_since_score0 = None
                         usg_recent0 = None
                         usg_game0 = None
                         team_usg_recent0 = None
@@ -38841,6 +39044,54 @@ def api_live_player_lens():
                                             eff = float(max(0.95, min(1.05, eff)))
                                             hot_cold_mult_used = float(eff)
                                             pace_raw = float(pace_raw) * float(eff)
+                                except Exception:
+                                    pass
+
+                                # Event timing (v1): react to whether a player's shot/scoring events
+                                # are arriving faster or slower than their game-to-date cadence.
+                                try:
+                                    tr = timing_recent.get(nk) if isinstance(timing_recent, dict) else None
+                                    tg = timing_game.get(nk) if isinstance(timing_game, dict) else None
+                                    if isinstance(tr, dict) and isinstance(tg, dict):
+                                        event_rate_recent0 = _num(tr.get("event_rate_per_min"))
+                                        event_rate_game0 = _num(tg.get("event_rate_per_min"))
+                                        score_rate_recent0 = _num(tr.get("score_rate_per_min"))
+                                        score_rate_game0 = _num(tg.get("score_rate_per_min"))
+                                        points_rate_recent0 = _num(tr.get("points_rate_per_min"))
+                                        points_rate_game0 = _num(tg.get("points_rate_per_min"))
+                                        seconds_since_event0 = _num(tr.get("seconds_since_event"))
+                                        seconds_since_score0 = _num(tr.get("seconds_since_score"))
+
+                                        timing_mult = None
+                                        if stat_key in {"pts", "pra", "pa", "pr"}:
+                                            pr_r = points_rate_recent0
+                                            pr_g = points_rate_game0
+                                            if pr_r is not None and pr_g is not None and pr_g > 1e-6:
+                                                ratio = float(pr_r / pr_g)
+                                                recent_events = float(_num(tr.get("event_count")) or 0.0)
+                                                w_evt = float(recent_events / (recent_events + 4.0)) if recent_events > 0 else 0.0
+                                                timing_mult = float(1.0 + (ratio - 1.0) * max(0.0, min(1.0, w_evt)))
+                                            if timing_mult is not None and seconds_since_score0 is not None:
+                                                drought_cut = float(max(45.0, min(150.0, float(recent_window_sec) * 0.55)))
+                                                if float(seconds_since_score0) >= drought_cut:
+                                                    timing_mult *= 0.97
+                                        elif stat_key == "threes":
+                                            r3_r = _num(tr.get("fg3a_rate_per_min"))
+                                            r3_g = _num(tg.get("fg3a_rate_per_min"))
+                                            if r3_r is not None and r3_g is not None and r3_g > 1e-6:
+                                                ratio = float(r3_r / r3_g)
+                                                recent_3a = float(_num(tr.get("fg3a")) or 0.0)
+                                                w_evt = float(recent_3a / (recent_3a + 2.0)) if recent_3a > 0 else 0.0
+                                                timing_mult = float(1.0 + (ratio - 1.0) * max(0.0, min(1.0, w_evt)))
+                                            if timing_mult is not None and seconds_since_event0 is not None:
+                                                drought_cut = float(max(60.0, min(180.0, float(recent_window_sec) * 0.70)))
+                                                if float(seconds_since_event0) >= drought_cut:
+                                                    timing_mult *= 0.97
+
+                                        if timing_mult is not None:
+                                            timing_mult = float(max(0.92, min(1.08, timing_mult)))
+                                            event_timing_mult_used = float(timing_mult)
+                                            pace_raw = float(pace_raw) * float(timing_mult)
                                 except Exception:
                                     pass
 
@@ -39455,6 +39706,15 @@ def api_live_player_lens():
                             "hot_ppp_game": hot_ppp_game,
                             "hot_p3_recent": hot_p3_recent,
                             "hot_p3_game": hot_p3_game,
+                            "event_timing_mult": event_timing_mult_used,
+                            "event_rate_recent": event_rate_recent0,
+                            "event_rate_game": event_rate_game0,
+                            "score_rate_recent": score_rate_recent0,
+                            "score_rate_game": score_rate_game0,
+                            "points_rate_recent": points_rate_recent0,
+                            "points_rate_game": points_rate_game0,
+                            "seconds_since_event": seconds_since_event0,
+                            "seconds_since_score": seconds_since_score0,
                             "usg_recent": usg_recent0,
                             "usg_game": usg_game0,
                             "team_usg_recent": team_usg_recent0,
@@ -44846,10 +45106,19 @@ def api_cron_live_lens_tick():
                                     "role_mult": _safe_float(r0.get("role_mult")),
                                     "foul_mult": _safe_float(r0.get("foul_mult")),
                                     "hot_cold_mult": _safe_float(r0.get("hot_cold_mult")),
+                                    "event_timing_mult": _safe_float(r0.get("event_timing_mult")),
                                     "hot_ppp_recent": _safe_float(r0.get("hot_ppp_recent")),
                                     "hot_ppp_game": _safe_float(r0.get("hot_ppp_game")),
                                     "hot_p3_recent": _safe_float(r0.get("hot_p3_recent")),
                                     "hot_p3_game": _safe_float(r0.get("hot_p3_game")),
+                                    "event_rate_recent": _safe_float(r0.get("event_rate_recent")),
+                                    "event_rate_game": _safe_float(r0.get("event_rate_game")),
+                                    "score_rate_recent": _safe_float(r0.get("score_rate_recent")),
+                                    "score_rate_game": _safe_float(r0.get("score_rate_game")),
+                                    "points_rate_recent": _safe_float(r0.get("points_rate_recent")),
+                                    "points_rate_game": _safe_float(r0.get("points_rate_game")),
+                                    "seconds_since_event": _safe_int(r0.get("seconds_since_event")),
+                                    "seconds_since_score": _safe_int(r0.get("seconds_since_score")),
                                     "usg_recent": _safe_float(r0.get("usg_recent")),
                                     "usg_game": _safe_float(r0.get("usg_game")),
                                     "team_usg_recent": _safe_float(r0.get("team_usg_recent")),
