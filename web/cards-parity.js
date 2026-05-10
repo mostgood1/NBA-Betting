@@ -971,7 +971,7 @@
     const homeSpread = Number(liveLines?.lines?.home_spread);
     const homeMl = Number(liveLines?.lines?.home_ml);
     const awayMl = Number(liveLines?.lines?.away_ml);
-    const totalGate = Number(thresholds.adjustments?.game_total?.min_elapsed_min);
+    const totalGate = scopeMinElapsed('game');
     const recentWindow = pbpStats?.pbp_recent || {};
     const currentPeriod = Number(liveState?.period);
     const periodTotals = liveLines?.lines?.period_totals || {};
@@ -1060,6 +1060,184 @@
       return ((1 - blendWeight) * pregame) + (blendWeight * projected);
     }
 
+    function totalAdjustmentConfig(scopeKey) {
+      if (scopeKey === 'game') {
+        return thresholds.adjustments?.game_total || {};
+      }
+      if (scopeKey === 'h1' || scopeKey === 'h2') {
+        return thresholds.adjustments?.half_total || thresholds.adjustments?.scope_total || {};
+      }
+      return thresholds.adjustments?.quarter_total || thresholds.adjustments?.scope_total || {};
+    }
+
+    function scopeMinElapsed(scopeKey) {
+      const cfg = totalAdjustmentConfig(scopeKey);
+      const baseMinElapsed = Number(cfg?.min_elapsed_min);
+      if (!Number.isFinite(baseMinElapsed) || baseMinElapsed <= 0) {
+        return null;
+      }
+      if (scopeKey === 'game') {
+        return baseMinElapsed;
+      }
+      const scopeMinutes = (scopeKey === 'h1' || scopeKey === 'h2') ? 24 : 12;
+      return baseMinElapsed * (scopeMinutes / 48);
+    }
+
+    function attemptsForScope(scopeKey) {
+      if (scopeKey === 'game') {
+        return pbpStats?.pbp_attempts || null;
+      }
+      const periods = pbpStats?.pbp_attempts_periods;
+      return periods && typeof periods === 'object' ? periods?.[scopeKey] || null : null;
+    }
+
+    function possessionsForScope(scopeKey) {
+      if (scopeKey === 'game') {
+        return pbpStats?.pbp_possessions || null;
+      }
+      const periods = pbpStats?.pbp_possessions_periods;
+      return periods && typeof periods === 'object' ? periods?.[scopeKey] || null : null;
+    }
+
+    function averagePossessionsFromBuckets(buckets) {
+      if (!buckets || typeof buckets !== 'object') {
+        return null;
+      }
+      const awayBucket = bucketForTeam(buckets, game?.away_tri, 'away');
+      const homeBucket = bucketForTeam(buckets, game?.home_tri, 'home');
+      const awayPoss = Number(awayBucket?.poss_est);
+      const homePoss = Number(homeBucket?.poss_est);
+      if (Number.isFinite(awayPoss) && Number.isFinite(homePoss)) {
+        return (awayPoss + homePoss) / 2;
+      }
+      const totalPoss = Number(buckets?.total?.poss_est);
+      if (Number.isFinite(totalPoss) && totalPoss > 0) {
+        return totalPoss / 2;
+      }
+      return finiteFirst(awayPoss, homePoss);
+    }
+
+    function computeScopeTotalFlow(scopeKey, scopeActual, scopeElapsed, scopeRemaining) {
+      const recentCfg = thresholds.recentWindow || {};
+      const scopeCfg = totalAdjustmentConfig(scopeKey);
+      const recentWindowSec = Number(recentWindow?.window_sec);
+      const recentMinutes = Number.isFinite(recentWindowSec) && recentWindowSec > 0 ? (recentWindowSec / 60) : null;
+      const recentPoints = Number(recentWindow?.points_total);
+      const recentAttempts = recentWindow?.attempts?.total || {};
+      const recentPoss = averagePossessionsFromBuckets(recentWindow?.possessions);
+      const scopePoss = averagePossessionsFromBuckets(possessionsForScope(scopeKey));
+      const scopePoints = Number(scopeActual);
+      const scopeElapsedMin = Number(scopeElapsed);
+      const scopeRemainingMin = Number(scopeRemaining);
+      const recentFga = Number(recentAttempts?.fga);
+      const recentFta = Number(recentAttempts?.ft_att);
+      const recentVolume = (Number.isFinite(recentFga) ? recentFga : 0) + (0.44 * (Number.isFinite(recentFta) ? recentFta : 0));
+      const recentEfgPct = Number(recentAttempts?.efg_pct);
+      const recentTsPct = Number(recentAttempts?.ts_pct);
+      const runInfo = recentWindow?.current_scoring_run || {};
+      const runPoints = Number(runInfo?.points);
+      const runTeam = String(runInfo?.team || '').trim().toUpperCase() || null;
+      const secondsSinceScore = Number(recentWindow?.seconds_since_score);
+      let paceAdj = 0;
+      let effAdj = 0;
+      let streakAdj = 0;
+      const recentEnabled = recentCfg?.enabled !== false && scopeCfg?.enabled !== false;
+      if (
+        recentEnabled
+        && Number.isFinite(scopePoints)
+        && Number.isFinite(scopeElapsedMin)
+        && scopeElapsedMin > 0
+        && Number.isFinite(scopeRemainingMin)
+        && scopeRemainingMin > 0
+        && Number.isFinite(recentMinutes)
+        && recentMinutes > 0
+        && Number.isFinite(recentPoints)
+      ) {
+        const minPossessions = Number(recentCfg?.min_possessions);
+        const minAttempts = Number(recentCfg?.min_attempts);
+        const hasEnoughPossessions = !Number.isFinite(minPossessions) || (Number.isFinite(recentPoss) && recentPoss >= minPossessions);
+        const hasEnoughAttempts = !Number.isFinite(minAttempts) || recentVolume >= minAttempts;
+        const paceWeightRaw = scopeKey === 'game' ? Number(scopeCfg?.pace_weight) : Number(recentCfg?.pace_weight);
+        const effWeightRaw = scopeKey === 'game' ? Number(scopeCfg?.eff_weight) : Number(recentCfg?.eff_weight);
+        const effWeightProj = scopeKey === 'game' ? 1 : Number(scopeCfg?.eff_weight_proj);
+        const paceWeight = Number.isFinite(paceWeightRaw) ? paceWeightRaw : 0;
+        const effWeight = Number.isFinite(effWeightRaw) ? effWeightRaw : 0;
+        const paceCapRaw = scopeKey === 'game' ? Number(scopeCfg?.pace_cap_points) : Number(recentCfg?.pace_cap_points);
+        const effCapRaw = scopeKey === 'game' ? Number(scopeCfg?.eff_cap_points) : Number(recentCfg?.eff_cap_points);
+        const paceCap = Number.isFinite(paceCapRaw) ? paceCapRaw : 3;
+        const effCap = Number.isFinite(effCapRaw) ? effCapRaw : 2;
+        const scopeRate = scopePoints / Math.max(scopeElapsedMin, 1);
+        const recentRate = recentPoints / recentMinutes;
+        if (hasEnoughAttempts) {
+          paceAdj = clampNumber((recentRate - scopeRate) * Math.min(scopeRemainingMin, 12) * Math.max(0, paceWeight) * 0.1, -paceCap, paceCap);
+        }
+        if (hasEnoughPossessions && Number.isFinite(scopePoss) && scopePoss > 0 && Number.isFinite(recentPoss) && recentPoss > 0) {
+          const scopePpp = scopePoints / scopePoss;
+          const recentPpp = recentPoints / recentPoss;
+          const scopePossPerMin = scopePoss / Math.max(scopeElapsedMin, 1);
+          const recentPossPerMin = recentPoss / recentMinutes;
+          const projectedRemainingPoss = Math.max(0, ((scopePossPerMin + recentPossPerMin) / 2) * scopeRemainingMin);
+          const effScale = Number.isFinite(effWeightProj) && effWeightProj > 0 ? effWeightProj : 1;
+          effAdj = clampNumber((recentPpp - scopePpp) * projectedRemainingPoss * Math.max(0, effWeight) * effScale, -effCap, effCap);
+        }
+
+        const runTrigger = Number(recentCfg?.run_trigger_points);
+        const runWeight = Number(recentCfg?.run_weight);
+        const runCap = Number(recentCfg?.run_cap_points);
+        const hotPauseMax = Number(recentCfg?.max_hot_streak_pause_sec);
+        if (
+          Number.isFinite(runPoints)
+          && runPoints >= (Number.isFinite(runTrigger) ? runTrigger : 8)
+          && (!Number.isFinite(secondsSinceScore) || secondsSinceScore <= (Number.isFinite(hotPauseMax) ? hotPauseMax : 30))
+        ) {
+          streakAdj += Math.min(
+            Number.isFinite(runCap) ? runCap : 1.25,
+            Math.max(0, (runPoints - (Number.isFinite(runTrigger) ? runTrigger : 8) + 1) * (Number.isFinite(runWeight) ? runWeight : 0.2))
+          );
+        }
+        const coldTrigger = Number(recentCfg?.cold_spell_trigger_sec);
+        const coldWeight = Number(recentCfg?.cold_spell_weight);
+        const coldCap = Number(recentCfg?.cold_spell_cap_points);
+        if (Number.isFinite(secondsSinceScore) && secondsSinceScore >= (Number.isFinite(coldTrigger) ? coldTrigger : 75)) {
+          streakAdj -= Math.min(
+            Number.isFinite(coldCap) ? coldCap : 1.5,
+            ((secondsSinceScore - (Number.isFinite(coldTrigger) ? coldTrigger : 75)) / 30) * (Number.isFinite(coldWeight) ? coldWeight : 0.45)
+          );
+        }
+      }
+
+      const scopeRate = Number.isFinite(scopePoints) && Number.isFinite(scopeElapsedMin) && scopeElapsedMin > 0
+        ? scopePoints / scopeElapsedMin
+        : null;
+      const recentRate = Number.isFinite(recentPoints) && Number.isFinite(recentMinutes) && recentMinutes > 0
+        ? recentPoints / recentMinutes
+        : null;
+      const scopePpp = Number.isFinite(scopePoints) && Number.isFinite(scopePoss) && scopePoss > 0
+        ? scopePoints / scopePoss
+        : null;
+      const recentPpp = Number.isFinite(recentPoints) && Number.isFinite(recentPoss) && recentPoss > 0
+        ? recentPoints / recentPoss
+        : null;
+
+      return {
+        paceAdj,
+        effAdj,
+        streakAdj,
+        totalAdj: paceAdj + effAdj + streakAdj,
+        recentRate,
+        scopeRate,
+        recentPpp,
+        scopePpp,
+        recentPoss,
+        scopePoss,
+        recentEfgPct,
+        recentTsPct,
+        runPoints: Number.isFinite(runPoints) ? runPoints : null,
+        runTeam,
+        secondsSinceScore: Number.isFinite(secondsSinceScore) ? secondsSinceScore : null,
+      };
+    }
+
     function buildSignal(key, label, klass, side, edge, line, projection, extraDetail) {
       const sideLabel = side ? `${side} ` : '';
       const edgeValue = Number(edge);
@@ -1095,18 +1273,8 @@
       let projection = Number.isFinite(pregameTotal)
         ? ((1 - blendWeight) * pregameTotal) + (blendWeight * paceRaw)
         : paceRaw;
-      let recentAdj = 0;
-
-      const recentPoints = Number(recentWindow.points_total);
-      const recentWindowSec = Number(recentWindow.window_sec);
-      if (Number.isFinite(recentPoints) && Number.isFinite(recentWindowSec) && recentWindowSec > 0 && Number.isFinite(remainingMinutes) && elapsedForRate >= 6) {
-        const recentRate = recentPoints / (recentWindowSec / 60);
-        const gameRate = currentTotal / elapsedForRate;
-        const paceCap = Number(thresholds.recentWindow?.pace_cap_points);
-        const maxRecentAdj = Number.isFinite(paceCap) ? paceCap : 3;
-        recentAdj = clampNumber((recentRate - gameRate) * Math.min(remainingMinutes, 12) * 0.2, -maxRecentAdj, maxRecentAdj);
-        projection += recentAdj;
-      }
+      const totalFlow = computeScopeTotalFlow('game', currentTotal, elapsedForRate, remainingMinutes);
+      projection += totalFlow.totalAdj;
 
       let edge = projection - lineTotal;
       const endgameCfg = thresholds.endgameFoul || {};
@@ -1151,6 +1319,19 @@
       }
 
       const totalAdjCfg = thresholds.adjustments?.game_total || {};
+      const underEdgeFactor = Number(totalAdjCfg?.under_edge_factor);
+      if (edge < 0 && Number.isFinite(underEdgeFactor) && underEdgeFactor > 0 && underEdgeFactor < 1) {
+        edge *= underEdgeFactor;
+      }
+      let biasAdj = 0;
+      const biasPoints = Number(totalAdjCfg?.bias_points);
+      const biasCapPoints = Number(totalAdjCfg?.bias_cap_points);
+      if (Number.isFinite(biasPoints) && biasPoints !== 0) {
+        const ramp = clampNumber(elapsedForRate / 48, 0, 1);
+        const cap = Number.isFinite(biasCapPoints) && biasCapPoints > 0 ? biasCapPoints : Math.abs(biasPoints);
+        biasAdj = clampNumber(biasPoints * ramp, -cap, cap);
+        edge += biasAdj;
+      }
       const lateElapsedMin = Number(totalAdjCfg?.late_elapsed_min);
       const lateWatchMult = Number(totalAdjCfg?.late_watch_multiplier);
       const lateBetMult = Number(totalAdjCfg?.late_bet_multiplier);
@@ -1192,7 +1373,18 @@
       const totalShape = {
         pregameGap: Number.isFinite(pregameTotal) ? Number((pregameTotal - lineTotal).toFixed(3)) : null,
         livePaceGap: Number.isFinite(paceRaw) ? Number((paceRaw - lineTotal).toFixed(3)) : null,
-        recentAdj: Number.isFinite(recentAdj) ? Number(recentAdj.toFixed(3)) : null,
+        flowAdj: Number.isFinite(totalFlow.totalAdj) ? Number(totalFlow.totalAdj.toFixed(3)) : null,
+        paceAdj: Number.isFinite(totalFlow.paceAdj) ? Number(totalFlow.paceAdj.toFixed(3)) : null,
+        effAdj: Number.isFinite(totalFlow.effAdj) ? Number(totalFlow.effAdj.toFixed(3)) : null,
+        streakAdj: Number.isFinite(totalFlow.streakAdj) ? Number(totalFlow.streakAdj.toFixed(3)) : null,
+        recentRate: Number.isFinite(totalFlow.recentRate) ? Number(totalFlow.recentRate.toFixed(3)) : null,
+        recentPpp: Number.isFinite(totalFlow.recentPpp) ? Number(totalFlow.recentPpp.toFixed(3)) : null,
+        scopePpp: Number.isFinite(totalFlow.scopePpp) ? Number(totalFlow.scopePpp.toFixed(3)) : null,
+        recentEfgPct: Number.isFinite(totalFlow.recentEfgPct) ? Number(totalFlow.recentEfgPct.toFixed(4)) : null,
+        recentTsPct: Number.isFinite(totalFlow.recentTsPct) ? Number(totalFlow.recentTsPct.toFixed(4)) : null,
+        recentRunPoints: Number.isFinite(totalFlow.runPoints) ? Number(totalFlow.runPoints.toFixed(3)) : null,
+        secondsSinceScore: Number.isFinite(totalFlow.secondsSinceScore) ? Number(totalFlow.secondsSinceScore.toFixed(3)) : null,
+        biasAdj: Number.isFinite(biasAdj) ? Number(biasAdj.toFixed(3)) : null,
         endgameAdj: Number.isFinite(endgameAdj) ? Number(endgameAdj.toFixed(3)) : null,
         endgameReversion: Number.isFinite(endgameReversion) ? Number(endgameReversion.toFixed(3)) : null,
       };
@@ -1200,7 +1392,9 @@
         const directional = side === 'Over' ? 1 : -1;
         const priorGap = Number.isFinite(pregameTotal) ? directional * (pregameTotal - lineTotal) : null;
         const liveGap = Number.isFinite(paceRaw) ? directional * (paceRaw - lineTotal) : null;
-        const recentSupport = Number.isFinite(recentAdj) ? directional * recentAdj : null;
+        const paceSupport = Number.isFinite(totalFlow.paceAdj) ? directional * totalFlow.paceAdj : null;
+        const effSupport = Number.isFinite(totalFlow.effAdj) ? directional * totalFlow.effAdj : null;
+        const streakSupport = Number.isFinite(totalFlow.streakAdj) ? directional * totalFlow.streakAdj : null;
         if (Number.isFinite(priorGap) && priorGap >= 3) {
           totalShapeReasons.push(`Pregame shape was already ${fmtNumber(priorGap, 1)} points toward the ${side.toLowerCase()}`);
           totalShapeScore += Math.min(0.22, priorGap / 18);
@@ -1209,9 +1403,24 @@
           totalShapeReasons.push(`Live scoring pace is tracking ${fmtNumber(liveGap, 1)} points toward the ${side.toLowerCase()}`);
           totalShapeScore += Math.min(0.24, liveGap / 16);
         }
-        if (Number.isFinite(recentSupport) && recentSupport >= 1) {
-          totalShapeReasons.push(`The recent possession window is adding ${fmtNumber(Math.abs(recentAdj), 1)} points of fresh ${side.toLowerCase()} support`);
-          totalShapeScore += Math.min(0.14, recentSupport / 10);
+        if (Number.isFinite(paceSupport) && paceSupport >= 0.5) {
+          totalShapeReasons.push(`Recent flow pace is adding ${fmtNumber(Math.abs(totalFlow.paceAdj), 1)} points of ${side.toLowerCase()} support`);
+          totalShapeScore += Math.min(0.12, paceSupport / 6);
+        }
+        if (Number.isFinite(effSupport) && effSupport >= 0.4) {
+          const effLabel = Number.isFinite(totalFlow.recentTsPct)
+            ? `TS ${fmtPercent(totalFlow.recentTsPct, 0)}`
+            : 'recent scoring efficiency';
+          totalShapeReasons.push(`The recent possession window has ${effLabel}, worth ${fmtNumber(Math.abs(totalFlow.effAdj), 1)} points to the ${side.toLowerCase()}`);
+          totalShapeScore += Math.min(0.12, effSupport / 5);
+        }
+        if (Number.isFinite(streakSupport) && streakSupport >= 0.25) {
+          if (side === 'Over' && Number.isFinite(totalFlow.runPoints) && totalFlow.runPoints >= 8) {
+            totalShapeReasons.push(`${totalFlow.runTeam || 'One side'} is on a ${fmtInteger(totalFlow.runPoints)}-point run and the scoring tempo is still live`);
+          } else if (side === 'Under' && Number.isFinite(totalFlow.secondsSinceScore)) {
+            totalShapeReasons.push(`The game is in a ${fmtInteger(totalFlow.secondsSinceScore)}s scoring drought, which is cooling the total`);
+          }
+          totalShapeScore += Math.min(0.08, streakSupport / 3);
         }
         if (inEndgameWindow && side === 'Over' && endgameAdj > 0.4) {
           totalShapeReasons.push('Late-game foul context is still lifting the over path');
@@ -1233,12 +1442,17 @@
         const liveRate = halfActual / elapsedForRate;
         const paceRaw = halfActual + (liveRate * Math.max(0, halfMinutesRemaining || 0));
         const blendWeight = halfMinutesElapsed > 0 ? clampNumber(elapsedForRate / 24, 0.15, 1) : 0;
-        const projection = Number.isFinite(halfSim)
+        let projection = Number.isFinite(halfSim)
           ? ((1 - blendWeight) * halfSim) + (blendWeight * paceRaw)
           : paceRaw;
+        const halfFlow = computeScopeTotalFlow(lensHalfKey, halfActual, halfMinutesElapsed, halfMinutesRemaining);
+        projection += halfFlow.totalAdj;
         const edge = projection - halfLine;
         const side = edge > 1 ? 'Over' : (edge < -1 ? 'Under' : 'No edge');
-        const klass = classifyLens(Math.abs(edge), thresholds.half_total.watch, thresholds.half_total.bet);
+        const halfGate = scopeMinElapsed(lensHalfKey);
+        const klass = Number.isFinite(halfGate) && halfMinutesElapsed < halfGate
+          ? 'WAIT'
+          : classifyLens(Math.abs(edge), thresholds.half_total.watch, thresholds.half_total.bet);
         halfSignal = buildSignal('half_total', lensHalfLabel, klass, side, edge, halfLine, projection, halfMinutesElapsed > 0 ? `Total ${fmtInteger(halfActual)}` : 'Opening live half line');
         halfSignal.score = signalScore(Math.abs(edge), thresholds.half_total.bet);
 
@@ -1247,6 +1461,14 @@
         const halfTotalShape = {
           pregameGap: Number.isFinite(halfSim) ? Number((halfSim - halfLine).toFixed(3)) : null,
           livePaceGap: Number.isFinite(paceRaw) ? Number((paceRaw - halfLine).toFixed(3)) : null,
+          flowAdj: Number.isFinite(halfFlow.totalAdj) ? Number(halfFlow.totalAdj.toFixed(3)) : null,
+          paceAdj: Number.isFinite(halfFlow.paceAdj) ? Number(halfFlow.paceAdj.toFixed(3)) : null,
+          effAdj: Number.isFinite(halfFlow.effAdj) ? Number(halfFlow.effAdj.toFixed(3)) : null,
+          streakAdj: Number.isFinite(halfFlow.streakAdj) ? Number(halfFlow.streakAdj.toFixed(3)) : null,
+          recentPpp: Number.isFinite(halfFlow.recentPpp) ? Number(halfFlow.recentPpp.toFixed(3)) : null,
+          scopePpp: Number.isFinite(halfFlow.scopePpp) ? Number(halfFlow.scopePpp.toFixed(3)) : null,
+          recentRunPoints: Number.isFinite(halfFlow.runPoints) ? Number(halfFlow.runPoints.toFixed(3)) : null,
+          secondsSinceScore: Number.isFinite(halfFlow.secondsSinceScore) ? Number(halfFlow.secondsSinceScore.toFixed(3)) : null,
           actual: Number.isFinite(halfActual) ? Number(halfActual.toFixed(3)) : null,
           minutesRemaining: Number.isFinite(halfMinutesRemaining) ? Number(halfMinutesRemaining.toFixed(3)) : null,
         };
@@ -1254,6 +1476,9 @@
           const directional = side === 'Over' ? 1 : -1;
           const priorGap = Number.isFinite(halfSim) ? directional * (halfSim - halfLine) : null;
           const liveGap = Number.isFinite(paceRaw) ? directional * (paceRaw - halfLine) : null;
+          const paceSupport = Number.isFinite(halfFlow.paceAdj) ? directional * halfFlow.paceAdj : null;
+          const effSupport = Number.isFinite(halfFlow.effAdj) ? directional * halfFlow.effAdj : null;
+          const streakSupport = Number.isFinite(halfFlow.streakAdj) ? directional * halfFlow.streakAdj : null;
           if (Number.isFinite(priorGap) && priorGap >= 1.5) {
             halfTotalShapeReasons.push(`${lensHalfLabel} opened ${fmtNumber(priorGap, 1)} points toward the ${side.toLowerCase()} on the sim baseline`);
             halfTotalShapeScore += Math.min(0.16, priorGap / 12);
@@ -1261,6 +1486,22 @@
           if (Number.isFinite(liveGap) && liveGap >= 1.0) {
             halfTotalShapeReasons.push(`${lensHalfLabel} pace is still tracking ${fmtNumber(liveGap, 1)} points toward the ${side.toLowerCase()}`);
             halfTotalShapeScore += Math.min(0.18, liveGap / 10);
+          }
+          if (Number.isFinite(paceSupport) && paceSupport >= 0.4) {
+            halfTotalShapeReasons.push(`Recent flow pace is worth ${fmtNumber(Math.abs(halfFlow.paceAdj), 1)} points to the ${side.toLowerCase()} in ${lensHalfLabel}`);
+            halfTotalShapeScore += Math.min(0.10, paceSupport / 4);
+          }
+          if (Number.isFinite(effSupport) && effSupport >= 0.3) {
+            halfTotalShapeReasons.push(`Recent possessions are scoring efficiently enough to add ${fmtNumber(Math.abs(halfFlow.effAdj), 1)} points toward the ${side.toLowerCase()}`);
+            halfTotalShapeScore += Math.min(0.10, effSupport / 4);
+          }
+          if (Number.isFinite(streakSupport) && streakSupport >= 0.25) {
+            if (side === 'Over' && Number.isFinite(halfFlow.runPoints) && halfFlow.runPoints >= 8) {
+              halfTotalShapeReasons.push(`${halfFlow.runTeam || 'One side'} is on a live scoring run that is keeping ${lensHalfLabel} hot`);
+            } else if (side === 'Under' && Number.isFinite(halfFlow.secondsSinceScore)) {
+              halfTotalShapeReasons.push(`${lensHalfLabel} has gone ${fmtInteger(halfFlow.secondsSinceScore)}s without a score, which helps the under`);
+            }
+            halfTotalShapeScore += Math.min(0.08, streakSupport / 3);
           }
         }
         applySignalGameShape(halfSignal, halfTotalShapeReasons, halfTotalShapeScore, halfTotalShape);
@@ -1281,12 +1522,17 @@
         const liveRate = quarterActual / elapsedForRate;
         const paceRaw = quarterActual + (liveRate * Math.max(0, quarterMinutesRemaining || 0));
         const blendWeight = quarterMinutesElapsed > 0 ? clampNumber(elapsedForRate / 12, 0.18, 1) : 0;
-        const projection = Number.isFinite(quarterSim)
+        let projection = Number.isFinite(quarterSim)
           ? ((1 - blendWeight) * quarterSim) + (blendWeight * paceRaw)
           : paceRaw;
+        const quarterFlow = computeScopeTotalFlow(lensQuarterKey, quarterActual, quarterMinutesElapsed, quarterMinutesRemaining);
+        projection += quarterFlow.totalAdj;
         const edge = projection - quarterLine;
         const side = edge > 1 ? 'Over' : (edge < -1 ? 'Under' : 'No edge');
-        const klass = classifyLens(Math.abs(edge), thresholds.quarter_total.watch, thresholds.quarter_total.bet);
+        const quarterGate = scopeMinElapsed(lensQuarterKey);
+        const klass = Number.isFinite(quarterGate) && quarterMinutesElapsed < quarterGate
+          ? 'WAIT'
+          : classifyLens(Math.abs(edge), thresholds.quarter_total.watch, thresholds.quarter_total.bet);
         quarterSignal = buildSignal('quarter_total', lensQuarterLabel, klass, side, edge, quarterLine, projection, quarterMinutesElapsed > 0 ? `Total ${fmtInteger(quarterActual)}` : 'Opening live period line');
         quarterSignal.score = signalScore(Math.abs(edge), thresholds.quarter_total.bet);
 
@@ -1295,6 +1541,14 @@
         const quarterTotalShape = {
           pregameGap: Number.isFinite(quarterSim) ? Number((quarterSim - quarterLine).toFixed(3)) : null,
           livePaceGap: Number.isFinite(paceRaw) ? Number((paceRaw - quarterLine).toFixed(3)) : null,
+          flowAdj: Number.isFinite(quarterFlow.totalAdj) ? Number(quarterFlow.totalAdj.toFixed(3)) : null,
+          paceAdj: Number.isFinite(quarterFlow.paceAdj) ? Number(quarterFlow.paceAdj.toFixed(3)) : null,
+          effAdj: Number.isFinite(quarterFlow.effAdj) ? Number(quarterFlow.effAdj.toFixed(3)) : null,
+          streakAdj: Number.isFinite(quarterFlow.streakAdj) ? Number(quarterFlow.streakAdj.toFixed(3)) : null,
+          recentPpp: Number.isFinite(quarterFlow.recentPpp) ? Number(quarterFlow.recentPpp.toFixed(3)) : null,
+          scopePpp: Number.isFinite(quarterFlow.scopePpp) ? Number(quarterFlow.scopePpp.toFixed(3)) : null,
+          recentRunPoints: Number.isFinite(quarterFlow.runPoints) ? Number(quarterFlow.runPoints.toFixed(3)) : null,
+          secondsSinceScore: Number.isFinite(quarterFlow.secondsSinceScore) ? Number(quarterFlow.secondsSinceScore.toFixed(3)) : null,
           actual: Number.isFinite(quarterActual) ? Number(quarterActual.toFixed(3)) : null,
           minutesRemaining: Number.isFinite(quarterMinutesRemaining) ? Number(quarterMinutesRemaining.toFixed(3)) : null,
         };
@@ -1302,6 +1556,9 @@
           const directional = side === 'Over' ? 1 : -1;
           const priorGap = Number.isFinite(quarterSim) ? directional * (quarterSim - quarterLine) : null;
           const liveGap = Number.isFinite(paceRaw) ? directional * (paceRaw - quarterLine) : null;
+          const paceSupport = Number.isFinite(quarterFlow.paceAdj) ? directional * quarterFlow.paceAdj : null;
+          const effSupport = Number.isFinite(quarterFlow.effAdj) ? directional * quarterFlow.effAdj : null;
+          const streakSupport = Number.isFinite(quarterFlow.streakAdj) ? directional * quarterFlow.streakAdj : null;
           if (Number.isFinite(priorGap) && priorGap >= 1.0) {
             quarterTotalShapeReasons.push(`${lensQuarterLabel} opened ${fmtNumber(priorGap, 1)} points toward the ${side.toLowerCase()} on the sim baseline`);
             quarterTotalShapeScore += Math.min(0.14, priorGap / 10);
@@ -1309,6 +1566,22 @@
           if (Number.isFinite(liveGap) && liveGap >= 0.8) {
             quarterTotalShapeReasons.push(`${lensQuarterLabel} pace is still leaning ${side.toLowerCase()} by ${fmtNumber(liveGap, 1)}`);
             quarterTotalShapeScore += Math.min(0.16, liveGap / 8);
+          }
+          if (Number.isFinite(paceSupport) && paceSupport >= 0.3) {
+            quarterTotalShapeReasons.push(`Recent flow pace is adding ${fmtNumber(Math.abs(quarterFlow.paceAdj), 1)} points toward the ${side.toLowerCase()} in ${lensQuarterLabel}`);
+            quarterTotalShapeScore += Math.min(0.10, paceSupport / 3.5);
+          }
+          if (Number.isFinite(effSupport) && effSupport >= 0.25) {
+            quarterTotalShapeReasons.push(`Recent possessions are moving ${lensQuarterLabel} ${side.toLowerCase()} by ${fmtNumber(Math.abs(quarterFlow.effAdj), 1)} points`);
+            quarterTotalShapeScore += Math.min(0.10, effSupport / 3.5);
+          }
+          if (Number.isFinite(streakSupport) && streakSupport >= 0.2) {
+            if (side === 'Over' && Number.isFinite(quarterFlow.runPoints) && quarterFlow.runPoints >= 8) {
+              quarterTotalShapeReasons.push(`${quarterFlow.runTeam || 'One side'} is on a quick run that is heating up ${lensQuarterLabel}`);
+            } else if (side === 'Under' && Number.isFinite(quarterFlow.secondsSinceScore)) {
+              quarterTotalShapeReasons.push(`${lensQuarterLabel} has gone ${fmtInteger(quarterFlow.secondsSinceScore)}s without a score, which is cooling the pace`);
+            }
+            quarterTotalShapeScore += Math.min(0.08, streakSupport / 3);
           }
         }
         applySignalGameShape(quarterSignal, quarterTotalShapeReasons, quarterTotalShapeScore, quarterTotalShape);

@@ -1068,6 +1068,21 @@ def _score_day(ds: str, *, dedup_policy: str = "none", include_model_lines: bool
                 edge_shrink_lambda = _n(ctx.get("edge_shrink_lambda"))
                 edge_shrink_lambda_poss = _n(ctx.get("edge_shrink_lambda_poss"))
                 edge_shrink_lambda_time = _n(ctx.get("edge_shrink_lambda_time"))
+            shape_summary = str(obj.get("shape_summary") or "").strip() or None
+            shape_reasons = obj.get("shape_reasons") if isinstance(obj.get("shape_reasons"), list) else []
+            recent_window_pace_adj = _n(ctx.get("recent_window_pace_adj")) if isinstance(ctx, dict) else None
+            recent_window_eff_adj = _n(ctx.get("recent_window_eff_adj")) if isinstance(ctx, dict) else None
+            recent_window_streak_adj = _n(ctx.get("recent_window_streak_adj")) if isinstance(ctx, dict) else None
+            recent_window_w = _n(ctx.get("recent_window_w")) if isinstance(ctx, dict) else None
+            recent_window_rate = _n(ctx.get("recent_window_rate")) if isinstance(ctx, dict) else None
+            recent_window_scope_rate = _n(ctx.get("recent_window_scope_rate")) if isinstance(ctx, dict) else None
+            recent_window_ppp = _n(ctx.get("recent_window_ppp")) if isinstance(ctx, dict) else None
+            recent_window_scope_ppp = _n(ctx.get("recent_window_scope_ppp")) if isinstance(ctx, dict) else None
+            recent_window_efg_pct = _n(ctx.get("recent_window_efg_pct")) if isinstance(ctx, dict) else None
+            recent_window_ts_pct = _n(ctx.get("recent_window_ts_pct")) if isinstance(ctx, dict) else None
+            recent_window_run_team = str(ctx.get("recent_window_run_team") or "").strip().upper() or None if isinstance(ctx, dict) else None
+            recent_window_run_points = _n(ctx.get("recent_window_run_points")) if isinstance(ctx, dict) else None
+            recent_window_seconds_since_score = _n(ctx.get("recent_window_seconds_since_score")) if isinstance(ctx, dict) else None
 
             scored.append(
                 {
@@ -1108,6 +1123,21 @@ def _score_day(ds: str, *, dedup_policy: str = "none", include_model_lines: bool
                     "edge_shrink_lambda": edge_shrink_lambda,
                     "edge_shrink_lambda_poss": edge_shrink_lambda_poss,
                     "edge_shrink_lambda_time": edge_shrink_lambda_time,
+                    "shape_summary": shape_summary,
+                    "shape_reasons": shape_reasons,
+                    "recent_window_pace_adj": recent_window_pace_adj,
+                    "recent_window_eff_adj": recent_window_eff_adj,
+                    "recent_window_streak_adj": recent_window_streak_adj,
+                    "recent_window_w": recent_window_w,
+                    "recent_window_rate": recent_window_rate,
+                    "recent_window_scope_rate": recent_window_scope_rate,
+                    "recent_window_ppp": recent_window_ppp,
+                    "recent_window_scope_ppp": recent_window_scope_ppp,
+                    "recent_window_efg_pct": recent_window_efg_pct,
+                    "recent_window_ts_pct": recent_window_ts_pct,
+                    "recent_window_run_team": recent_window_run_team,
+                    "recent_window_run_points": recent_window_run_points,
+                    "recent_window_seconds_since_score": recent_window_seconds_since_score,
                     "missing_reason": missing_reason,
                     "has_recon_games": rg_ok,
                     "has_recon_quarters": rq_ok,

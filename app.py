@@ -3577,9 +3577,19 @@ def _live_pbp_recent_window_stats(actions: list[dict[str, Any]], window_sec: int
         except Exception:
             return None
 
+    def _empty_recent() -> dict[str, Any]:
+        return {
+            "window_sec": w,
+            "points_total": None,
+            "attempts": None,
+            "possessions": None,
+            "current_scoring_run": {"team": None, "points": None},
+            "seconds_since_score": None,
+        }
+
     acts = actions or []
     if not acts:
-        return {"window_sec": w, "points_total": None, "attempts": None, "possessions": None}
+        return _empty_recent()
 
     # Determine the most recent regulation timestamp we can observe.
     latest = None
@@ -3590,7 +3600,7 @@ def _live_pbp_recent_window_stats(actions: list[dict[str, Any]], window_sec: int
         if latest is None or int(e) > int(latest):
             latest = int(e)
     if latest is None:
-        return {"window_sec": w, "points_total": None, "attempts": None, "possessions": None}
+        return _empty_recent()
 
     cutoff = int(max(0, int(latest) - int(w)))
     sub: list[dict[str, Any]] = []
@@ -3607,29 +3617,87 @@ def _live_pbp_recent_window_stats(actions: list[dict[str, Any]], window_sec: int
         sub.append(a)
 
     if not sub:
-        return {"window_sec": w, "points_total": None, "attempts": None, "possessions": None}
+        return _empty_recent()
 
     # Points delta in window (best-effort) from score fields.
-    scored: list[tuple[int, int]] = []
-    for a in sub:
-        try:
-            e = _elapsed_reg_sec(a)
-            if e is None:
+    def _score_events(source_actions: list[dict[str, Any]]) -> list[tuple[int, int, int, int, str | None]]:
+        raw_events: list[tuple[int, int, int, int, str | None]] = []
+        for event in source_actions:
+            try:
+                e = _elapsed_reg_sec(event)
+                if e is None:
+                    continue
+                sh = _safe_int(event.get("scoreHome"))
+                sa = _safe_int(event.get("scoreAway"))
+                if sh is None or sa is None:
+                    continue
+                tri = str(event.get("teamTricode") or "").strip().upper() or None
+                raw_events.append((int(e), int(sh), int(sa), int(sh) + int(sa), tri))
+            except Exception:
                 continue
-            sh = _safe_int(a.get("scoreHome"))
-            sa = _safe_int(a.get("scoreAway"))
-            if sh is None or sa is None:
+        raw_events.sort(key=lambda x: x[0])
+        score_events: list[tuple[int, int, int, int, str | None]] = []
+        last_total = None
+        last_home = None
+        last_away = None
+        for item in raw_events:
+            _e, home_score, away_score, total_score, _tri = item
+            if last_total is None:
+                score_events.append(item)
+                last_total = total_score
+                last_home = home_score
+                last_away = away_score
                 continue
-            scored.append((int(e), int(sh) + int(sa)))
-        except Exception:
-            continue
+            if int(home_score) == int(last_home) and int(away_score) == int(last_away):
+                continue
+            if int(total_score) <= int(last_total):
+                continue
+            score_events.append(item)
+            last_total = total_score
+            last_home = home_score
+            last_away = away_score
+        return score_events
+
+    scored = _score_events(sub)
     points_total = None
+    seconds_since_score = None
     if scored:
-        scored.sort(key=lambda x: x[0])
         try:
-            points_total = int(scored[-1][1] - scored[0][1])
+            points_total = int(scored[-1][3] - scored[0][3])
         except Exception:
             points_total = None
+        try:
+            seconds_since_score = int(max(0, int(latest) - int(scored[-1][0])))
+        except Exception:
+            seconds_since_score = None
+
+    scored_game = [(e, sh, sa, tri) for e, sh, sa, _total, tri in _score_events(acts)]
+    current_scoring_run: dict[str, Any] = {"team": None, "points": None}
+    if len(scored_game) >= 2:
+        run_team = None
+        run_points = 0
+        for idx in range(len(scored_game) - 1, 0, -1):
+            _cur_elapsed, cur_home, cur_away, cur_team = scored_game[idx]
+            _prev_elapsed, prev_home, prev_away, _prev_team = scored_game[idx - 1]
+            delta_home = int(cur_home) - int(prev_home)
+            delta_away = int(cur_away) - int(prev_away)
+            if delta_home > 0 and delta_away <= 0:
+                scoring_team = cur_team
+                scoring_points = delta_home
+            elif delta_away > 0 and delta_home <= 0:
+                scoring_team = cur_team
+                scoring_points = delta_away
+            else:
+                break
+            if run_team is None:
+                run_team = scoring_team
+                run_points = int(scoring_points)
+                continue
+            if scoring_team != run_team:
+                break
+            run_points += int(scoring_points)
+        if run_team and run_points > 0:
+            current_scoring_run = {"team": run_team, "points": int(run_points)}
 
     attempts = _live_pbp_attempt_stats(sub) if sub else {"home": {}, "away": {}, "unknown": {}, "total": {}}
     possessions = _live_pbp_possession_stats(sub, attempts) if sub else {"home": {}, "away": {}, "unknown": {}, "total": {}}
@@ -3641,6 +3709,8 @@ def _live_pbp_recent_window_stats(actions: list[dict[str, Any]], window_sec: int
         "points_total": points_total,
         "attempts": attempts,
         "possessions": possessions,
+        "current_scoring_run": current_scoring_run,
+        "seconds_since_score": seconds_since_score,
     }
 
 
@@ -37222,7 +37292,7 @@ def api_live_pbp_stats():
         pbp_possessions = _live_pbp_possession_stats(actions, pbp_attempts) if actions else {"home": {}, "away": {}, "unknown": {}, "total": {}}
         pbp_possessions_periods = _live_pbp_possession_stats_periods(actions) if actions else {}
         pbp_quarters = _live_pbp_quarter_totals(actions) if actions else {"q_totals": {"q1": None, "q2": None, "q3": None, "q4": None}, "current": {"period": None, "q_total": None}}
-        pbp_recent = _live_pbp_recent_window_stats(actions, window_sec=recent_window_sec) if actions else {"window_sec": recent_window_sec, "points_total": None, "attempts": None, "possessions": None}
+        pbp_recent = _live_pbp_recent_window_stats(actions, window_sec=recent_window_sec) if actions else {"window_sec": recent_window_sec, "points_total": None, "attempts": None, "possessions": None, "current_scoring_run": {"team": None, "points": None}, "seconds_since_score": None}
 
         out.append({
             "event_id": str(eid),
@@ -39860,6 +39930,13 @@ def api_live_lens_tuning():
             "pace_cap_points": 3.0,
             "eff_weight": 0.20,
             "eff_cap_points": 2.0,
+            "run_trigger_points": 8,
+            "run_weight": 0.20,
+            "run_cap_points": 1.25,
+            "max_hot_streak_pause_sec": 30,
+            "cold_spell_trigger_sec": 75,
+            "cold_spell_weight": 0.45,
+            "cold_spell_cap_points": 1.5,
         },
         # Endgame foul-game adjustment (client-side): close games late often see
         # elevated possessions + FT rate; SmartSim ladder tends to understate this.
@@ -43580,6 +43657,146 @@ def api_cron_live_lens_tick():
         except Exception:
             return ctx
 
+    recent_cfg = tune.get("recent_window") if isinstance(tune.get("recent_window"), dict) else {}
+
+    def _recent_total_flow_context(*, scope_minutes: float, elapsed_scope: float | None, actual_total: float | None, poss_live: float | None, pbp_recent_obj: Any) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "recent_window_pace_adj": 0.0,
+            "recent_window_eff_adj": 0.0,
+            "recent_window_streak_adj": 0.0,
+            "recent_window_w": 0.0,
+            "recent_window_poss": None,
+            "recent_window_pts": None,
+            "recent_window_rate": None,
+            "recent_window_scope_rate": None,
+            "recent_window_ppp": None,
+            "recent_window_scope_ppp": None,
+            "recent_window_efg_pct": None,
+            "recent_window_ts_pct": None,
+            "recent_window_run_team": None,
+            "recent_window_run_points": None,
+            "recent_window_seconds_since_score": None,
+            "shape_summary": None,
+            "shape_reasons": [],
+        }
+        try:
+            if not isinstance(pbp_recent_obj, dict):
+                return out
+            recent_window_used = _safe_float(pbp_recent_obj.get("window_sec"))
+            recent_pts = _safe_float(pbp_recent_obj.get("points_total"))
+            recent_poss = _poss_avg(home, away, pbp_recent_obj.get("possessions") if isinstance(pbp_recent_obj.get("possessions"), dict) else None)
+            attempts_total = pbp_recent_obj.get("attempts") if isinstance(pbp_recent_obj.get("attempts"), dict) else {}
+            attempts_total = attempts_total.get("total") if isinstance(attempts_total.get("total"), dict) else attempts_total
+            recent_efg_pct = _safe_float((attempts_total or {}).get("efg_pct")) if isinstance(attempts_total, dict) else None
+            recent_ts_pct = _safe_float((attempts_total or {}).get("ts_pct")) if isinstance(attempts_total, dict) else None
+            run_info = pbp_recent_obj.get("current_scoring_run") if isinstance(pbp_recent_obj.get("current_scoring_run"), dict) else {}
+            run_team = str(run_info.get("team") or "").strip().upper() or None
+            run_points = _safe_float(run_info.get("points"))
+            seconds_since_score = _safe_float(pbp_recent_obj.get("seconds_since_score"))
+            out.update({
+                "recent_window_poss": recent_poss,
+                "recent_window_pts": recent_pts,
+                "recent_window_efg_pct": recent_efg_pct,
+                "recent_window_ts_pct": recent_ts_pct,
+                "recent_window_run_team": run_team,
+                "recent_window_run_points": run_points,
+                "recent_window_seconds_since_score": seconds_since_score,
+            })
+
+            if recent_window_used is None or recent_window_used <= 0 or elapsed_scope is None or actual_total is None:
+                return out
+
+            recent_minutes = float(recent_window_used) / 60.0
+            if recent_minutes <= 0:
+                return out
+            scope_elapsed = float(max(0.0, min(float(scope_minutes), float(elapsed_scope))))
+            if scope_elapsed <= 0:
+                return out
+            scope_remaining = float(max(0.0, float(scope_minutes) - scope_elapsed))
+            scope_rate = float(actual_total) / scope_elapsed if scope_elapsed > 0 else None
+            recent_rate = float(recent_pts) / recent_minutes if recent_pts is not None else None
+            scope_ppp = float(actual_total) / float(poss_live) if (actual_total is not None and poss_live is not None and float(poss_live) > 1e-9) else None
+            recent_ppp = float(recent_pts) / float(recent_poss) if (recent_pts is not None and recent_poss is not None and float(recent_poss) > 1e-9) else None
+            out["recent_window_rate"] = recent_rate
+            out["recent_window_scope_rate"] = scope_rate
+            out["recent_window_ppp"] = recent_ppp
+            out["recent_window_scope_ppp"] = scope_ppp
+
+            pace_weight = _safe_float(recent_cfg.get("pace_weight"))
+            if pace_weight is None:
+                pace_weight = 0.35
+            pace_cap = _safe_float(recent_cfg.get("pace_cap_points"))
+            if pace_cap is None:
+                pace_cap = 3.0
+            eff_weight = _safe_float(recent_cfg.get("eff_weight"))
+            if eff_weight is None:
+                eff_weight = 0.20
+            eff_cap = _safe_float(recent_cfg.get("eff_cap_points"))
+            if eff_cap is None:
+                eff_cap = 2.0
+            run_trigger = _safe_float(recent_cfg.get("run_trigger_points"))
+            if run_trigger is None:
+                run_trigger = 8.0
+            run_weight = _safe_float(recent_cfg.get("run_weight"))
+            if run_weight is None:
+                run_weight = 0.20
+            run_cap = _safe_float(recent_cfg.get("run_cap_points"))
+            if run_cap is None:
+                run_cap = 1.25
+            hot_pause_max = _safe_float(recent_cfg.get("max_hot_streak_pause_sec"))
+            if hot_pause_max is None:
+                hot_pause_max = 30.0
+            cold_trigger = _safe_float(recent_cfg.get("cold_spell_trigger_sec"))
+            if cold_trigger is None:
+                cold_trigger = 75.0
+            cold_weight = _safe_float(recent_cfg.get("cold_spell_weight"))
+            if cold_weight is None:
+                cold_weight = 0.45
+            cold_cap = _safe_float(recent_cfg.get("cold_spell_cap_points"))
+            if cold_cap is None:
+                cold_cap = 1.5
+
+            reasons: list[str] = []
+            pace_adj = 0.0
+            if recent_rate is not None and scope_rate is not None:
+                pace_adj = float(max(-float(pace_cap), min(float(pace_cap), (float(recent_rate) - float(scope_rate)) * min(scope_remaining, 12.0) * max(0.0, float(pace_weight)) * 0.1)))
+                if abs(pace_adj) >= 0.25:
+                    reasons.append(f"recent pace adj {pace_adj:+.2f}")
+
+            eff_adj = 0.0
+            if recent_ppp is not None and scope_ppp is not None and recent_poss is not None:
+                poss_per_min_scope = float(poss_live) / scope_elapsed if (poss_live is not None and scope_elapsed > 0 and float(poss_live) > 0) else None
+                poss_per_min_recent = float(recent_poss) / recent_minutes if recent_minutes > 0 else None
+                if poss_per_min_scope is not None and poss_per_min_recent is not None:
+                    projected_remaining_poss = max(0.0, ((poss_per_min_scope + poss_per_min_recent) / 2.0) * scope_remaining)
+                    eff_adj = float(max(-float(eff_cap), min(float(eff_cap), (float(recent_ppp) - float(scope_ppp)) * projected_remaining_poss * max(0.0, float(eff_weight)))))
+                    if abs(eff_adj) >= 0.2:
+                        reasons.append(f"recent efficiency adj {eff_adj:+.2f}")
+
+            streak_adj = 0.0
+            if run_points is not None and float(run_points) >= float(run_trigger) and (seconds_since_score is None or float(seconds_since_score) <= float(hot_pause_max)):
+                streak_adj += float(min(float(run_cap), max(0.0, (float(run_points) - float(run_trigger) + 1.0) * float(run_weight))))
+            if seconds_since_score is not None and float(seconds_since_score) >= float(cold_trigger):
+                streak_adj -= float(min(float(cold_cap), ((float(seconds_since_score) - float(cold_trigger)) / 30.0) * float(cold_weight)))
+            if abs(streak_adj) >= 0.15:
+                if streak_adj > 0 and run_points is not None:
+                    reasons.append(f"{run_team or 'run'} streak adj {streak_adj:+.2f} on {int(float(run_points))}-point run")
+                elif streak_adj < 0 and seconds_since_score is not None:
+                    reasons.append(f"scoring drought adj {streak_adj:+.2f} after {int(float(seconds_since_score))}s")
+
+            recent_w = 1.0 if (abs(pace_adj) > 1e-9 or abs(eff_adj) > 1e-9 or abs(streak_adj) > 1e-9) else 0.0
+            out.update({
+                "recent_window_pace_adj": pace_adj,
+                "recent_window_eff_adj": eff_adj,
+                "recent_window_streak_adj": streak_adj,
+                "recent_window_w": recent_w,
+                "shape_reasons": reasons,
+                "shape_summary": reasons[0] if reasons else None,
+            })
+            return out
+        except Exception:
+            return out
+
     # Find in-progress games.
     try:
         _src, sb_games = _live_build_scoreboard_games(ds)
@@ -43753,6 +43970,13 @@ def api_cron_live_lens_tick():
                                                         poss_live=game_poss_live,
                                                         exp_pace=exp_pace,
                                                     )
+                                                    game_recent_ctx = _recent_total_flow_context(
+                                                        scope_minutes=48.0,
+                                                        elapsed_scope=float(elapsed_min),
+                                                        actual_total=float(total_pts),
+                                                        poss_live=game_poss_live,
+                                                        pbp_recent_obj=pbp_recent,
+                                                    )
                                                     body = {
                                                         "date": ds,
                                                         "game_id": gid,
@@ -43778,6 +44002,8 @@ def api_cron_live_lens_tick():
                                                         "edge_adj": float(edge_g),
                                                         "pred": float(proj_g),
                                                         "strength": float(abs(edge_g)),
+                                                        "shape_summary": game_recent_ctx.get("shape_summary"),
+                                                        "shape_reasons": game_recent_ctx.get("shape_reasons"),
                                                         "context": {
                                                             "thr_watch": float(tot_watch),
                                                             "thr_bet": float(tot_bet),
@@ -43793,6 +44019,7 @@ def api_cron_live_lens_tick():
                                                             "recent_window_poss": recent_poss_live,
                                                             "recent_window_pts": recent_pts,
                                                             **game_ctx,
+                                                            **game_recent_ctx,
                                                         },
                                                         "received_at": now,
                                                         "tick_bucket": bucket_key,
@@ -43908,6 +44135,13 @@ def api_cron_live_lens_tick():
                                                             poss_live=poss_h,
                                                             exp_pace=exp_pace,
                                                         )
+                                                        half_recent_ctx = _recent_total_flow_context(
+                                                            scope_minutes=24.0,
+                                                            elapsed_scope=elapsed_h,
+                                                            actual_total=float(total_pts),
+                                                            poss_live=poss_h,
+                                                            pbp_recent_obj=pbp_recent,
+                                                        )
                                                         body = {
                                                             "date": ds,
                                                             "game_id": gid,
@@ -43933,6 +44167,8 @@ def api_cron_live_lens_tick():
                                                             "edge_adj": float(edge_h),
                                                             "pred": float(proj_h),
                                                             "strength": float(abs(edge_h)),
+                                                            "shape_summary": half_recent_ctx.get("shape_summary"),
+                                                            "shape_reasons": half_recent_ctx.get("shape_reasons"),
                                                             "context": {
                                                                 "thr_watch": float(half_watch),
                                                                 "thr_bet": float(half_bet),
@@ -43940,6 +44176,7 @@ def api_cron_live_lens_tick():
                                                                 "edge_shrink_lambda_poss": _safe_float(shrink_h.get("lambda_poss")),
                                                                 "edge_shrink_lambda_time": _safe_float(shrink_h.get("lambda_time")),
                                                                 **half_ctx,
+                                                                **half_recent_ctx,
                                                             },
                                                             "received_at": now,
                                                             "tick_bucket": bucket_key,
@@ -44059,6 +44296,13 @@ def api_cron_live_lens_tick():
                                                             poss_live=poss_q,
                                                             exp_pace=exp_pace,
                                                         )
+                                                        quarter_recent_ctx = _recent_total_flow_context(
+                                                            scope_minutes=12.0,
+                                                            elapsed_scope=elapsed_q,
+                                                            actual_total=float(q_total_now),
+                                                            poss_live=poss_q,
+                                                            pbp_recent_obj=pbp_recent,
+                                                        )
                                                         body = {
                                                             "date": ds,
                                                             "game_id": gid,
@@ -44084,6 +44328,8 @@ def api_cron_live_lens_tick():
                                                             "edge_adj": float(edge_q),
                                                             "pred": float(proj_q),
                                                             "strength": float(abs(edge_q)),
+                                                            "shape_summary": quarter_recent_ctx.get("shape_summary"),
+                                                            "shape_reasons": quarter_recent_ctx.get("shape_reasons"),
                                                             "context": {
                                                                 "scope_present": 1,
                                                                 "q_num": int(q_num),
@@ -44093,6 +44339,7 @@ def api_cron_live_lens_tick():
                                                                 "edge_shrink_lambda_poss": _safe_float(shrink_q.get("lambda_poss")),
                                                                 "edge_shrink_lambda_time": _safe_float(shrink_q.get("lambda_time")),
                                                                 **quarter_ctx,
+                                                                **quarter_recent_ctx,
                                                             },
                                                             "received_at": now,
                                                             "tick_bucket": bucket_key,
