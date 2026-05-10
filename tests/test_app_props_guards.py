@@ -1694,6 +1694,75 @@ def test_api_live_player_props_projection_audit_scores_adjusted_rows(tmp_path, m
     assert payload["by_stat"][0]["stat"] == "pts"
 
 
+def test_api_live_player_props_projection_audit_backfills_missing_recon_props(tmp_path, monkeypatch):
+    processed = tmp_path / "data" / "processed"
+    processed.mkdir(parents=True)
+
+    (processed / "live_lens_projections_2026-03-30.jsonl").write_text(
+        json.dumps(
+            {
+                "date": "2026-03-30",
+                "market": "player_prop",
+                "game_id": "0000000002",
+                "home": "PHX",
+                "away": "UTA",
+                "player": "Devin Booker",
+                "name_key": "DEVIN BOOKER",
+                "team_tri": "PHX",
+                "stat": "pts",
+                "proj": 28.0,
+                "sim_mu": 25.0,
+                "sim_mu_adjusted": 26.5,
+                "elapsed": 18.0,
+                "strength": 3.1,
+                "received_at": "2026-03-30T21:10:00Z",
+                "context": {},
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(app_module, "DATA_PROCESSED_DIR", processed)
+    monkeypatch.setenv("NBA_LIVE_LENS_DIR", str(processed))
+    app_module._load_recon_props_frame.cache_clear()
+
+    def _fake_backfill(_date):
+        return (
+            pd.DataFrame(
+                [
+                    {
+                        "date": "2026-03-30",
+                        "game_id": "0000000002",
+                        "player_id": 1626164,
+                        "player_name": "Devin Booker",
+                        "team_abbr": "PHX",
+                        "pts": 27,
+                        "reb": 4,
+                        "ast": 6,
+                        "threes": 3,
+                        "stl": 1,
+                        "blk": 0,
+                        "tov": 2,
+                        "pra": 37,
+                    }
+                ]
+            ),
+            "recon_props_2026-03-30.csv",
+        )
+
+    monkeypatch.setattr(app_module, "_maybe_backfill_recon_props_frame", _fake_backfill)
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/api/live_player_props_projection_audit?date=2026-03-30")
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["ok"] is True
+    assert payload["overall"]["n"] == 1
+    assert payload["overall"]["mae_proj"] == 1.0
+    assert payload["overall"]["mae_adjusted"] == 0.5
+
+
 def test_load_props_movement_callouts_exposes_player_id_photo_fallback(tmp_path, monkeypatch):
     processed = tmp_path / "data" / "processed"
     processed.mkdir(parents=True)

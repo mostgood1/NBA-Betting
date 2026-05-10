@@ -14951,7 +14951,78 @@ def _load_recon_props_frame(date_str: str) -> tuple[pd.DataFrame, str | None]:
     except Exception:
         pass
 
+    try:
+        df, source_name = _maybe_backfill_recon_props_frame(date_str)
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            return df, source_name
+    except Exception:
+        pass
+
     return pd.DataFrame(), None
+
+
+def _maybe_backfill_recon_props_frame(date_str: str) -> tuple[pd.DataFrame, str | None]:
+    try:
+        target_date = pd.to_datetime(date_str, errors="coerce")
+    except Exception:
+        target_date = None
+    if target_date is None or pd.isna(target_date):
+        return pd.DataFrame(), None
+
+    try:
+        # Avoid generating partial same-day/future actuals on demand.
+        if target_date.date() >= _date.today():
+            return pd.DataFrame(), None
+    except Exception:
+        return pd.DataFrame(), None
+
+    try:
+        from nba_betting.props_actuals import fetch_prop_actuals_via_nba_cdn, fetch_prop_actuals_via_nbaapi, upsert_props_actuals  # type: ignore
+    except Exception:
+        return pd.DataFrame(), None
+
+    df = pd.DataFrame()
+    try:
+        df = fetch_prop_actuals_via_nba_cdn(str(target_date.date().isoformat()))
+    except Exception:
+        df = pd.DataFrame()
+
+    if df is None or df.empty:
+        try:
+            df = fetch_prop_actuals_via_nbaapi(str(target_date.date().isoformat()))
+        except Exception:
+            df = pd.DataFrame()
+
+    if df is None or df.empty:
+        return pd.DataFrame(), None
+
+    try:
+        upsert_props_actuals(df)
+    except Exception:
+        pass
+
+    try:
+        out = df.copy()
+        out["date"] = pd.to_datetime(out.get("date"), errors="coerce").dt.date
+        out = out[out["date"] == target_date.date()].copy()
+        if out.empty:
+            return pd.DataFrame(), None
+        if "team_abbr" not in out.columns and "team" in out.columns:
+            out["team_abbr"] = out["team"]
+        keep = [c for c in ["date", "game_id", "player_id", "player_name", "team_abbr", "pts", "reb", "ast", "threes", "stl", "blk", "tov", "pra"] if c in out.columns]
+        if not keep:
+            return pd.DataFrame(), None
+        DATA_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+        out_csv = DATA_PROCESSED_DIR / f"recon_props_{date_str}.csv"
+        out_small = out[keep].copy()
+        out_small.to_csv(out_csv, index=False)
+        try:
+            _load_recon_props_lookup.cache_clear()
+        except Exception:
+            pass
+        return out_small, out_csv.name
+    except Exception:
+        return pd.DataFrame(), None
 
 
 @lru_cache(maxsize=16)
@@ -24416,9 +24487,9 @@ def _ll_build_recon_indexes(ds: str) -> dict[str, Any]:
     except Exception:
         rq = pd.DataFrame()
     try:
-        p = DATA_PROCESSED_DIR / f"recon_props_{ds}.csv"
-        if p.exists():
-            rp = _ll_prep_recon_props(pd.read_csv(p))
+        rp_df, _ = _load_recon_props_frame(ds)
+        if isinstance(rp_df, pd.DataFrame) and not rp_df.empty:
+            rp = _ll_prep_recon_props(rp_df)
     except Exception:
         rp = pd.DataFrame()
 
