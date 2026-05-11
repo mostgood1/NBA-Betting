@@ -1984,6 +1984,107 @@ def test_api_live_player_props_projection_audit_replays_close_game_signals(tmp_p
     assert row["pregame_stat_multiplier"] < 1.2
 
 
+def test_api_cron_live_lens_tick_requests_debug_player_rows(tmp_path, monkeypatch):
+    processed = tmp_path / "data" / "processed"
+    processed.mkdir(parents=True)
+
+    monkeypatch.setattr(app_module, "DATA_PROCESSED_DIR", processed)
+    monkeypatch.setenv("NBA_LIVE_LENS_DIR", str(processed))
+    monkeypatch.setattr(app_module, "_cron_auth_ok", lambda _req: True)
+    monkeypatch.setattr(app_module, "_admin_auth_ok", lambda _req: False)
+    monkeypatch.setattr(
+        app_module,
+        "_live_build_scoreboard_games",
+        lambda _ds: (
+            "espn",
+            [
+                {
+                    "espn_event_id": "401999999",
+                    "game_id": "0000000003",
+                    "home": "PHX",
+                    "away": "UTA",
+                    "in_progress": True,
+                    "final": False,
+                    "period": 4,
+                    "clock": "05:00",
+                    "home_pts": 102,
+                    "away_pts": 100,
+                }
+            ],
+        ),
+    )
+
+    app_module._live_lens_tick_last_logged.clear()
+    app_module._live_lens_tick_last_proj_logged.clear()
+    app_module._live_lens_tick_first_bet_logged.clear()
+
+    requested_paths: list[str] = []
+
+    class _FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def get_json(self, silent=False):
+            return self._payload
+
+    class _FakeInnerClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, path):
+            requested_paths.append(path)
+            if path.startswith("/api/live_lens_tuning"):
+                return _FakeResponse(200, {"markets": {"player_prop": {"watch": 2.0, "bet": 4.0}}})
+            if path.startswith("/api/live_player_lens"):
+                return _FakeResponse(
+                    200,
+                    {
+                        "games": [
+                            {
+                                "event_id": "401999999",
+                                "game_id": "0000000003",
+                                "home": "PHX",
+                                "away": "UTA",
+                                "status": {"in_progress": True, "final": False, "period": 4, "clock": "05:00", "elapsed_min": 43.0},
+                                "rows": [
+                                    {
+                                        "player": "Devin Booker",
+                                        "team_tri": "PHX",
+                                        "name_key": "DEVIN BOOKER",
+                                        "stat": "pts",
+                                        "line": 35.0,
+                                        "pace_vs_line": 5.0,
+                                        "pace_proj": 40.0,
+                                        "sim_mu": 30.0,
+                                        "sim_mu_adjusted": 36.0,
+                                        "strength": 5.0,
+                                        "sim_vs_line": -5.0,
+                                        "sim_vs_line_adjusted": 1.0,
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                )
+            raise AssertionError(f"unexpected internal path: {path}")
+
+    monkeypatch.setattr(app_module.app, "test_client", lambda: _FakeInnerClient())
+
+    with app_module.app.test_request_context(
+        "/api/cron/live-lens-tick?date=2026-03-31&include_total=0&include_ats=0&include_ml=0&include_player_props=1&first_bet_only=0&max_props_per_game=1"
+    ):
+        resp = app_module.api_cron_live_lens_tick()
+
+    payload = resp.get_json()
+    assert payload["ok"] is True
+    assert payload["wrote_signals"] == 1
+    assert any(path.startswith("/api/live_player_lens") and "include_debug_rows=1" in path for path in requested_paths)
+
+
 def test_load_recon_props_frame_backfills_from_live_lens_artifacts(tmp_path, monkeypatch):
     processed = tmp_path / "data" / "processed"
     processed.mkdir(parents=True)
