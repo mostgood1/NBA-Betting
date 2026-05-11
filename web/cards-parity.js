@@ -5469,7 +5469,7 @@
         ${renderGroup('Other playable props', `${groups.playable.length} plays`, groups.playable, {
           chipClass: 'is-candidate',
           secondary: true,
-          description: 'Qualified lanes that did not make the official card after caps and one-prop-per-player selection.',
+          description: 'Qualified lanes that did not make the official card after official thresholds or one-prop-per-player selection.',
           teamStacks: true,
         })}
       </div>

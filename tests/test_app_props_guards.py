@@ -913,6 +913,26 @@ def test_api_cards_normalizes_snapshot_names_and_backfills_roster_coverage(tmp_p
     assert all("Players with prop lines missing from SmartSim boxscore" not in warning for warning in warnings)
 
 
+def test_cards_select_prop_buckets_does_not_cap_total_qualifying_props(monkeypatch):
+    rows = [
+        {"team": "PHX", "player": "Devin Booker", "row_id": 1},
+        {"team": "PHX", "player": "Kevin Durant", "row_id": 2},
+        {"team": "PHX", "player": "Bradley Beal", "row_id": 3},
+    ]
+
+    monkeypatch.setattr(app_module, "_cards_locked_policy_annotate", lambda row: dict(row))
+    monkeypatch.setattr(app_module, "_cards_locked_policy_sort_key", lambda row: (float(row["row_id"]), 0.0, 0.0, 0.0, 0.0, 0.0))
+    monkeypatch.setattr(app_module, "_cards_prop_sleeve_policy", lambda _row: None)
+    monkeypatch.setattr(app_module, "_cards_prop_official_via_sleeve_policy", lambda _row: True)
+    monkeypatch.setattr(app_module, "_cards_prop_playable_via_sleeve_policy", lambda _row: True)
+
+    official, playable = app_module._cards_select_prop_buckets(rows)
+
+    assert [row["player"] for row in official] == ["Bradley Beal", "Kevin Durant", "Devin Booker"]
+    assert playable == []
+    assert [row["card_rank"] for row in official] == [1, 2, 3]
+
+
 def test_api_cards_normalizes_claxton_alias_without_missing_prop_warning(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     processed = data_dir / "processed"
