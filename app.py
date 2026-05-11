@@ -1712,6 +1712,48 @@ def _live_prop_progress_fraction(elapsed_min: Any) -> float:
     return float(max(0.0, min(1.0, value / 48.0)))
 
 
+def _live_prop_competitive_regime_scale(stat_key: Any, elapsed_min: Any, script_margin: Any) -> float:
+    try:
+        market = _live_stat_key(stat_key)
+    except Exception:
+        market = str(stat_key or "").strip().lower()
+    if market not in {"pts", "pra", "pa", "pr", "threes"}:
+        return 1.0
+    elapsed = _safe_float(elapsed_min)
+    margin_abs = _safe_float(script_margin)
+    if elapsed is None or margin_abs is None:
+        return 1.0
+    try:
+        margin_abs = abs(float(margin_abs))
+    except Exception:
+        return 1.0
+    if elapsed < 18.0 or margin_abs >= 15.0:
+        return 1.0
+
+    scale = 1.0
+    if margin_abs < 12.0:
+        scale *= 0.92
+    if elapsed >= 30.0 and margin_abs < 8.0:
+        scale *= 0.86
+    if elapsed >= 36.0 and margin_abs < 6.0:
+        scale *= 0.82
+    return float(max(0.60, min(1.0, scale)))
+
+
+def _live_scale_multiplier_toward_one(multiplier: Any, scale: Any) -> float | None:
+    mult = _safe_float(multiplier)
+    factor = _safe_float(scale)
+    if mult is None:
+        return None
+    if factor is None:
+        return mult
+    try:
+        out = 1.0 + (float(mult) - 1.0) * float(max(0.0, min(1.0, factor)))
+        return float(out)
+    except Exception:
+        return mult
+
+
 def _live_prop_selected_gap(selected_side: Any, over_gap: Any) -> float:
     side = str(selected_side or "").strip().upper()
     gap = _safe_float(over_gap)
@@ -38946,7 +38988,17 @@ def api_live_player_lens():
                         line_used = line_live if line_live is not None else (float(line_pregame) if line_pregame is not None else None)
                         line_source = ("oddsapi" if line_live is not None else ("pregame" if line_pregame is not None else None))
                         sim_mu = _pred_val(pred_row, stat_key)
+                        script_margin_effective = _effective_team_margin_for_tri(team)
+                        competitive_regime_scale = _live_prop_competitive_regime_scale(
+                            stat_key,
+                            elapsed_min,
+                            script_margin_effective,
+                        )
                         pregame_stat_multiplier = _live_player_prop_pregame_multiplier(team_pregame_prior, stat_key)
+                        pregame_stat_multiplier = _live_scale_multiplier_toward_one(
+                            pregame_stat_multiplier,
+                            competitive_regime_scale,
+                        )
                         sim_mu_adjusted = None
                         if sim_mu is not None:
                             try:
@@ -39168,6 +39220,12 @@ def api_live_player_lens():
                                     role_mult = None
                                     pace_mult = None
 
+                                try:
+                                    pace_mult = _live_scale_multiplier_toward_one(pace_mult, competitive_regime_scale)
+                                    role_mult = _live_scale_multiplier_toward_one(role_mult, competitive_regime_scale)
+                                except Exception:
+                                    pass
+
                                 # Capture final multipliers (post-script/shrink). They may be None when we lack PBP.
                                 try:
                                     pace_mult_used = float(pace_mult) if pace_mult is not None else None
@@ -39272,6 +39330,7 @@ def api_live_player_lens():
 
                                         if timing_mult is not None:
                                             timing_mult = float(max(0.92, min(1.08, timing_mult)))
+                                            timing_mult = _live_scale_multiplier_toward_one(timing_mult, competitive_regime_scale)
                                             event_timing_mult_used = float(timing_mult)
                                             pace_raw = float(pace_raw) * float(timing_mult)
                                 except Exception:

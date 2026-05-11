@@ -1621,6 +1621,110 @@ def test_api_live_player_lens_uses_pbp_event_timing_for_live_prop_projection(mon
     assert pts_row["pace_proj"] > 30.0
 
 
+def test_api_live_player_lens_damps_late_competitive_script_lift(monkeypatch):
+    nk = app_module._norm_player_name("Devin Booker")
+
+    monkeypatch.setattr(
+        app_module,
+        "_load_best_bets_game_context",
+        lambda _date: {
+            "by_pair": {
+                ("PHX", "UTA"): {
+                    "home_team": "Phoenix Suns",
+                    "away_team": "Utah Jazz",
+                    "home_tri": "PHX",
+                    "away_tri": "UTA",
+                    "pred_total_raw": 210.0,
+                    "pred_total_adjusted": 236.0,
+                    "pred_total": 236.0,
+                    "pred_margin_raw": 0.0,
+                    "pred_margin_adjusted": 8.0,
+                    "pred_margin": 8.0,
+                    "home_pred_points": 120.0,
+                    "away_pred_points": 116.0,
+                    "home_win_prob_adjusted": 0.69,
+                }
+            }
+        },
+    )
+
+    scoreboard = {
+        "home_pts": 95,
+        "away_pts": 70,
+    }
+
+    def _fake_scoreboard(_date):
+        return (
+            "espn",
+            [
+                {
+                    "espn_event_id": "evt-1",
+                    "game_id": "001",
+                    "home": "PHX",
+                    "away": "UTA",
+                    "period": 4,
+                    "clock": "04:00",
+                    "in_progress": True,
+                    "final": False,
+                    "home_pts": scoreboard["home_pts"],
+                    "away_pts": scoreboard["away_pts"],
+                }
+            ],
+        )
+
+    monkeypatch.setattr(app_module, "_live_build_scoreboard_games", _fake_scoreboard)
+    monkeypatch.setattr(app_module, "_live_fetch_espn_summary", lambda _eid: {"ok": True})
+    monkeypatch.setattr(
+        app_module,
+        "_live_extract_player_boxscore_from_espn_summary",
+        lambda _summary: [
+            {
+                "team_tri": "PHX",
+                "player": "Devin Booker",
+                "player_id": 1626164,
+                "starter": True,
+                "mp": 28,
+                "pf": 1,
+                "pts": 22,
+                "reb": 4,
+                "ast": 6,
+                "threes_made": 3,
+                "stl": 1,
+                "blk": 0,
+                "tov": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(app_module, "_live_load_props_edges_index", lambda _date: {("PHX", nk, "pts"): 26.5})
+    monkeypatch.setattr(app_module, "_live_load_props_recommendations_line_index", lambda _date: {})
+    monkeypatch.setattr(app_module, "_live_load_props_predictions_index", lambda _date: {("PHX", nk): {"pred_pts": 20.0, "roll10_min": 36.0}})
+    monkeypatch.setattr(app_module, "_live_roster_pid_by_team_nk", lambda: {("PHX", nk): 1626164})
+    monkeypatch.setattr(app_module, "_live_oddsapi_player_props_for_game", lambda _date, _home, _away: {})
+    monkeypatch.setattr(app_module, "_live_load_smart_sim_by_game_id", lambda _date, _gid: {})
+    monkeypatch.setattr(app_module, "_live_fetch_pbp_actions", lambda _gid: [])
+    monkeypatch.setattr(app_module, "_live_append_snapshot", lambda *_args, **_kwargs: None)
+
+    def _run_payload() -> dict:
+        app_module._live_player_lens_multi_cache.clear()
+        with app_module.app.test_request_context("/api/live_player_lens?date=2026-03-30&event_ids=evt-1"):
+            response = app_module.api_live_player_lens()
+        return response.get_json()
+
+    blowout_payload = _run_payload()
+    blowout_row = next(row for row in blowout_payload["games"][0]["rows"] if row["player"] == "Devin Booker" and row["stat"] == "pts")
+
+    scoreboard["home_pts"] = 95
+    scoreboard["away_pts"] = 92
+    close_payload = _run_payload()
+    close_row = next(row for row in close_payload["games"][0]["rows"] if row["player"] == "Devin Booker" and row["stat"] == "pts")
+
+    assert blowout_row["pregame_margin_blended"] > 15.0
+    assert abs(close_row["pregame_margin_blended"]) < 8.0
+    assert close_row["sim_mu_adjusted"] < blowout_row["sim_mu_adjusted"]
+    assert close_row["pregame_stat_multiplier"] < blowout_row["pregame_stat_multiplier"]
+    assert close_row["sim_vs_line_adjusted"] < blowout_row["sim_vs_line_adjusted"]
+
+
 def test_api_live_player_props_projection_audit_scores_adjusted_rows(tmp_path, monkeypatch):
     processed = tmp_path / "data" / "processed"
     processed.mkdir(parents=True)
