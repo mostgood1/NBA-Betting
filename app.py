@@ -45438,7 +45438,7 @@ def api_cron_live_lens_tick():
         try:
             with app.test_client() as c:
                 r = c.get(
-                    f"/api/live_player_lens?ttl={int(ttl)}&recent_window_sec={int(recent_window_sec)}&date={ds}&event_ids={','.join(event_ids)}"
+                    f"/api/live_player_lens?ttl={int(ttl)}&recent_window_sec={int(recent_window_sec)}&date={ds}&event_ids={','.join(event_ids)}&include_debug_rows=1"
                 )
                 if r.status_code == 200:
                     j = r.get_json(silent=True)
