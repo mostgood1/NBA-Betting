@@ -1867,6 +1867,123 @@ def test_api_live_player_props_projection_audit_backfills_missing_recon_props(tm
     assert payload["overall"]["mae_adjusted"] == 0.5
 
 
+def test_api_live_player_props_projection_audit_replays_close_game_signals(tmp_path, monkeypatch):
+    processed = tmp_path / "data" / "processed"
+    processed.mkdir(parents=True)
+
+    (processed / "live_lens_signals_2026-03-31.jsonl").write_text(
+        json.dumps(
+            {
+                "date": "2026-03-31",
+                "market": "player_prop",
+                "game_id": "0000000003",
+                "event_id": "401999999",
+                "home": "PHX",
+                "away": "UTA",
+                "period": 4,
+                "sec_left_period": 300,
+                "player": "Devin Booker",
+                "name_key": "Devin Booker",
+                "team_tri": "PHX",
+                "stat": "pts",
+                "side": "OVER",
+                "mp": 20.0,
+                "pf": 2.0,
+                "starter": True,
+                "line": 35.0,
+                "pace_proj": 40.0,
+                "sim_mu": 30.0,
+                "sim_mu_adjusted": 36.0,
+                "strength": 5.0,
+                "elapsed": 43.0,
+                "received_at": "2026-03-31T22:10:00Z",
+                "context": {
+                    "pregame_team_total_ratio": 1.08,
+                    "pregame_game_total_ratio": 1.04,
+                    "pregame_margin_blended": 6.0,
+                    "pregame_stat_multiplier": 1.2,
+                    "pace_mult": 1.1,
+                    "role_mult": 1.1,
+                    "event_timing_mult": 1.05,
+                    "hot_cold_mult": 1.0,
+                    "foul_mult": 1.0,
+                    "injury_flag": False,
+                    "rot_on_court": True,
+                },
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+
+    pd.DataFrame(
+        [
+            {
+                "game_id": "0000000003",
+                "player_name": "Devin Booker",
+                "pts": 34,
+                "reb": 4,
+                "ast": 6,
+                "threes": 3,
+                "stl": 1,
+                "blk": 0,
+                "tov": 2,
+            }
+        ]
+    ).to_csv(processed / "recon_props_2026-03-31.csv", index=False)
+
+    monkeypatch.setattr(app_module, "DATA_PROCESSED_DIR", processed)
+    monkeypatch.setenv("NBA_LIVE_LENS_DIR", str(processed))
+    app_module._load_recon_props_frame.cache_clear()
+    app_module._ll_event_summary_actions.cache_clear()
+
+    def _fake_summary(_event_id):
+        return {
+            "header": {
+                "competitions": [
+                    {
+                        "competitors": [
+                            {"team": {"id": "2", "abbreviation": "PHX"}},
+                            {"team": {"id": "3", "abbreviation": "UTA"}},
+                        ]
+                    }
+                ]
+            },
+            "plays": [
+                {
+                    "period": {"number": 4},
+                    "clock": {"displayValue": "05:00"},
+                    "homeScore": 102,
+                    "awayScore": 100,
+                    "team": {"id": "2"},
+                    "shootingPlay": True,
+                    "pointsAttempted": 2,
+                    "scoreValue": 2,
+                    "text": "Devin Booker made jumper",
+                    "type": {"text": "Jump Shot"},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(app_module, "_live_fetch_espn_summary", _fake_summary)
+
+    with app_module.app.test_client() as client:
+        resp = client.get("/api/live_player_props_projection_audit?date=2026-03-31&replay=signals&include_rows=1")
+
+    assert resp.status_code == 200
+    payload = resp.get_json()
+    assert payload["ok"] is True
+    assert payload["overall"]["n"] == 1
+    assert payload["debug"]["days"][0]["audit_source"] == "signals"
+
+    row = payload["history"]["rows"][0]
+    assert row["proj_original"] == 40.0
+    assert row["sim_mu_adjusted"] < 36.0
+    assert row["sim_mu_adjusted_original"] == 36.0
+    assert row["proj"] < 40.0
+    assert row["pregame_stat_multiplier_original"] == 1.2
+    assert row["pregame_stat_multiplier"] < 1.2
+
+
 def test_load_recon_props_frame_backfills_from_live_lens_artifacts(tmp_path, monkeypatch):
     processed = tmp_path / "data" / "processed"
     processed.mkdir(parents=True)

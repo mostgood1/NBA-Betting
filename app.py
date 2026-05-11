@@ -25471,6 +25471,242 @@ def _ll_projection_latest(objs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [obj for _, obj in sorted(groups.values(), key=lambda item: _ll_projection_ts(item[1], item[0]))]
 
 
+def _ll_signal_latest_player_props(objs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[Any, ...], tuple[int, dict[str, Any]]] = {}
+    for idx, obj in enumerate(objs or []):
+        if not isinstance(obj, dict):
+            continue
+        try:
+            if str(obj.get("market") or "").strip().lower() != "player_prop":
+                continue
+            gid = _ll_resolve_gid(obj, str(obj.get("date") or "")) or _ll_canon_gid10(obj.get("game_id_canon") or obj.get("game_id"))
+            if not gid:
+                continue
+            name_key = _norm_player_name(str(obj.get("name_key") or obj.get("player") or ""))
+            stat_key = _live_stat_key(obj.get("stat"))
+            if not name_key or not stat_key:
+                continue
+            key = (gid, name_key, stat_key)
+            cur = groups.get(key)
+            if cur is None or _ll_projection_ts(obj, idx) > _ll_projection_ts(cur[1], cur[0]):
+                groups[key] = (idx, obj)
+        except Exception:
+            continue
+    return [obj for _, obj in sorted(groups.values(), key=lambda item: _ll_projection_ts(item[1], item[0]))]
+
+
+@lru_cache(maxsize=512)
+def _ll_event_summary_actions(event_id: str) -> list[dict[str, Any]]:
+    eid = str(event_id or "").strip()
+    if not eid:
+        return []
+    try:
+        return _live_espn_actions_from_summary(_live_fetch_espn_summary(eid)) or []
+    except Exception:
+        return []
+
+
+def _ll_margin_home_at_game_state(event_id: Any, period: Any, sec_left_period: Any) -> float | None:
+    eid = str(event_id or "").strip()
+    per = _safe_int(period)
+    sec_left = _safe_int(sec_left_period)
+    if not eid or per is None or sec_left is None or per < 1 or sec_left < 0:
+        return None
+    actions = _ll_event_summary_actions(eid)
+    if not actions:
+        return None
+
+    try:
+        target_elapsed = int((int(per) - 1) * (12 * 60) + ((12 * 60) - int(sec_left)))
+    except Exception:
+        return None
+
+    best_before: tuple[int, float] | None = None
+    best_after: tuple[int, float] | None = None
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        try:
+            action_period = _safe_int(action.get("period"))
+            action_sec_left = _live_parse_clock_to_sec_left(action.get("clock") or action.get("timeRemaining"))
+            if action_period is None or action_sec_left is None or action_period < 1:
+                continue
+            elapsed = int((int(action_period) - 1) * (12 * 60) + ((12 * 60) - int(action_sec_left)))
+            home_score = _safe_float(action.get("scoreHome"))
+            away_score = _safe_float(action.get("scoreAway"))
+            if home_score is None or away_score is None:
+                continue
+            margin_home = float(home_score) - float(away_score)
+            if elapsed <= target_elapsed:
+                if best_before is None or elapsed >= best_before[0]:
+                    best_before = (elapsed, margin_home)
+            elif best_after is None or elapsed < best_after[0]:
+                best_after = (elapsed, margin_home)
+        except Exception:
+            continue
+
+    if best_before is not None:
+        return float(best_before[1])
+    if best_after is not None:
+        return float(best_after[1])
+    return None
+
+
+def _ll_player_prop_replay_projection(obj: dict[str, Any], ds: str) -> dict[str, Any] | None:
+    if not isinstance(obj, dict):
+        return None
+
+    context = obj.get("context") if isinstance(obj.get("context"), dict) else {}
+    gid = _ll_resolve_gid(obj, ds)
+    if not gid:
+        return None
+
+    player = str(obj.get("player") or "").strip() or None
+    name_key = _norm_player_name(str(obj.get("name_key") or player or ""))
+    stat_key = _live_stat_key(obj.get("stat"))
+    if not name_key or not stat_key:
+        return None
+
+    team_tri = str(obj.get("team_tri") or "").strip().upper() or None
+    home = str(obj.get("home") or "").strip().upper() or None
+    away = str(obj.get("away") or "").strip().upper() or None
+    elapsed = _safe_float(obj.get("elapsed"))
+    line = _safe_float(obj.get("line"))
+    sim_mu = _safe_float(obj.get("sim_mu"))
+    sim_mu_adjusted_old = _safe_float(obj.get("sim_mu_adjusted"))
+    proj_old = _safe_float(obj.get("pace_proj") if obj.get("pace_proj") is not None else obj.get("proj"))
+
+    home_margin = _ll_margin_home_at_game_state(obj.get("event_id"), obj.get("period"), obj.get("sec_left_period"))
+    score_diff_team = None
+    try:
+        if home_margin is not None and team_tri and home and away:
+            score_diff_team = float(home_margin) if team_tri == home else float(-home_margin)
+    except Exception:
+        score_diff_team = None
+
+    competitive_scale = _live_prop_competitive_regime_scale(stat_key, elapsed, score_diff_team)
+
+    pregame_mult_old = _safe_float(context.get("pregame_stat_multiplier"))
+    pregame_mult_new = _live_scale_multiplier_toward_one(pregame_mult_old, competitive_scale)
+    sim_mu_adjusted_new = None
+    if sim_mu is not None:
+        try:
+            if pregame_mult_new is not None and math.isfinite(float(pregame_mult_new)):
+                sim_mu_adjusted_new = float(sim_mu) * float(pregame_mult_new)
+            else:
+                sim_mu_adjusted_new = float(sim_mu)
+        except Exception:
+            sim_mu_adjusted_new = None
+
+    pace_mult_old = _safe_float(context.get("pace_mult"))
+    role_mult_old = _safe_float(context.get("role_mult"))
+    event_mult_old = _safe_float(context.get("event_timing_mult"))
+
+    pace_mult_new = _live_scale_multiplier_toward_one(pace_mult_old, competitive_scale)
+    role_mult_new = _live_scale_multiplier_toward_one(role_mult_old, competitive_scale)
+    event_mult_new = _live_scale_multiplier_toward_one(event_mult_old, competitive_scale)
+
+    def _ratio(old_value: float | None, new_value: float | None) -> float:
+        if old_value is None or new_value is None:
+            return 1.0
+        try:
+            old_num = float(old_value)
+            new_num = float(new_value)
+            if not math.isfinite(old_num) or abs(old_num) < 1e-9:
+                return 1.0
+            if not math.isfinite(new_num):
+                return 1.0
+            return float(new_num / old_num)
+        except Exception:
+            return 1.0
+
+    proj_new = proj_old
+    try:
+        changed_ratio = float(_ratio(pace_mult_old, pace_mult_new) * _ratio(role_mult_old, role_mult_new) * _ratio(event_mult_old, event_mult_new))
+        mp = _safe_float(obj.get("mp"))
+        pf = _safe_float(obj.get("pf"))
+        injury_flag = bool(context.get("injury_flag")) if context.get("injury_flag") is not None else False
+        starter = bool(obj.get("starter")) if obj.get("starter") is not None else None
+        rot_on_court = context.get("rot_on_court")
+
+        prior_old = sim_mu_adjusted_old if sim_mu_adjusted_old is not None else line
+        prior_new = sim_mu_adjusted_new if sim_mu_adjusted_new is not None else line
+        if mp is not None and proj_old is not None and prior_old is not None:
+            k = 6.0
+            risk = 0.0
+            if injury_flag:
+                risk += 0.9
+            try:
+                pf_i = int(round(float(pf))) if pf is not None else None
+            except Exception:
+                pf_i = None
+            if pf_i is not None and pf_i >= 5:
+                risk += 0.35
+            em_v = float(elapsed) if elapsed is not None else 0.0
+            mabs_v = abs(float(home_margin)) if home_margin is not None else None
+            if starter is True and mabs_v is not None and mabs_v >= 18.0 and em_v >= 30.0:
+                risk += 0.40
+            try:
+                if rot_on_court is False and em_v >= 34.0:
+                    risk += 0.25
+            except Exception:
+                pass
+            risk = float(max(0.0, min(2.0, risk)))
+            w = float(mp) / float(float(mp) + (6.0 * (1.0 + risk))) if float(mp) >= 0 else 0.0
+            w = float(max(0.0, min(1.0, w)))
+            if w <= 1e-9:
+                proj_new = prior_new
+            else:
+                pace_raw_old = (float(proj_old) - ((1.0 - w) * float(prior_old))) / float(w)
+                pace_raw_new = float(pace_raw_old) * float(changed_ratio)
+                if prior_new is not None:
+                    proj_new = float((w * pace_raw_new) + ((1.0 - w) * float(prior_new)))
+                else:
+                    proj_new = float(pace_raw_new)
+    except Exception:
+        proj_new = proj_old
+
+    return {
+        "date": ds,
+        "game_id": gid,
+        "event_id": obj.get("event_id"),
+        "home": home,
+        "away": away,
+        "player": player,
+        "name_key": name_key,
+        "team_tri": team_tri,
+        "stat": stat_key,
+        "line": line,
+        "proj": _number(proj_new),
+        "proj_original": _number(proj_old),
+        "sim_mu": _number(sim_mu),
+        "sim_mu_adjusted": _number(sim_mu_adjusted_new),
+        "sim_mu_adjusted_original": _number(sim_mu_adjusted_old),
+        "elapsed": _number(elapsed),
+        "strength": _number(obj.get("strength")),
+        "received_at": obj.get("received_at"),
+        "context": {
+            "pregame_team_total_ratio": _number(context.get("pregame_team_total_ratio")),
+            "pregame_game_total_ratio": _number(context.get("pregame_game_total_ratio")),
+            "pregame_margin_blended": _number(context.get("pregame_margin_blended")),
+            "pregame_stat_multiplier": _number(pregame_mult_new),
+            "pregame_stat_multiplier_original": _number(pregame_mult_old),
+            "pace_mult": _number(pace_mult_new),
+            "pace_mult_original": _number(pace_mult_old),
+            "role_mult": _number(role_mult_new),
+            "role_mult_original": _number(role_mult_old),
+            "event_timing_mult": _number(event_mult_new),
+            "event_timing_mult_original": _number(event_mult_old),
+            "competitive_regime_scale": _number(competitive_scale),
+            "margin_home": _number(home_margin),
+            "score_diff_team": _number(score_diff_team),
+            "sim_vs_line": _number((sim_mu - float(line)) if sim_mu is not None and line is not None else None),
+            "sim_vs_line_adjusted": _number((sim_mu_adjusted_new - float(line)) if sim_mu_adjusted_new is not None and line is not None else None),
+            "replay_source": "signals",
+        },
+    }
+
+
 def _ll_mae(values: pd.Series) -> float | None:
     try:
         clean = pd.to_numeric(values, errors="coerce").dropna()
@@ -25562,6 +25798,8 @@ def api_live_player_props_projection_audit():
             return jsonify({"ok": False, "error": "invalid date window"}), 400
         include_rows = _ll_arg_bool("include_rows", False)
         max_rows = _ll_arg_int("max_rows", 1000, 100, 20000)
+        replay_mode = str(request.args.get("replay") or "").strip().lower()
+        use_signal_replay = replay_mode in {"signals", "signal", "current"}
 
         all_days: list[pd.DataFrame] = []
         per_day: list[dict[str, Any]] = []
@@ -25571,11 +25809,23 @@ def api_live_player_props_projection_audit():
         while d <= end:
             ds = d.isoformat()
             proj_path = _live_lens_artifacts_dir() / f"live_lens_projections_{ds}.jsonl"
+            sig_path = _live_lens_artifacts_dir() / f"live_lens_signals_{ds}.jsonl"
             raw_rows = _ll_load_jsonl(proj_path)
             latest_rows = _ll_projection_latest(raw_rows)
+            raw_signal_rows: list[dict[str, Any]] = []
+            latest_signal_rows: list[dict[str, Any]] = []
+            replay_rows: list[dict[str, Any]] = []
+            if use_signal_replay:
+                raw_signal_rows = _ll_load_jsonl(sig_path)
+                latest_signal_rows = _ll_signal_latest_player_props(raw_signal_rows)
+                for signal_obj in latest_signal_rows:
+                    replay_obj = _ll_player_prop_replay_projection(signal_obj, ds)
+                    if replay_obj is not None:
+                        replay_rows.append(replay_obj)
+            rows_for_audit = replay_rows if replay_rows else latest_rows
             idx = _ll_build_recon_indexes(ds)
             audit_rows: list[dict[str, Any]] = []
-            for obj in latest_rows:
+            for obj in rows_for_audit:
                 try:
                     gid = _ll_resolve_gid(obj, ds)
                     if not gid:
@@ -25604,14 +25854,17 @@ def api_live_player_props_projection_audit():
                         "line": _number(obj.get("line")),
                         "actual": actual,
                         "proj": proj,
+                        "proj_original": _number(obj.get("proj_original")),
                         "sim_mu": sim_raw,
                         "sim_mu_adjusted": sim_adjusted,
+                        "sim_mu_adjusted_original": _number(obj.get("sim_mu_adjusted_original")),
                         "elapsed": _number(obj.get("elapsed")),
                         "strength": _number(obj.get("strength")),
                         "pregame_team_total_ratio": _number(context.get("pregame_team_total_ratio")),
                         "pregame_game_total_ratio": _number(context.get("pregame_game_total_ratio")),
                         "pregame_margin_blended": _number(context.get("pregame_margin_blended")),
                         "pregame_stat_multiplier": _number(context.get("pregame_stat_multiplier")),
+                        "pregame_stat_multiplier_original": _number(context.get("pregame_stat_multiplier_original")),
                         "sim_vs_line": _number(context.get("sim_vs_line")),
                         "sim_vs_line_adjusted": _number(context.get("sim_vs_line_adjusted")),
                     }
@@ -25658,8 +25911,14 @@ def api_live_player_props_projection_audit():
             debug_days.append({
                 "date": ds,
                 "projection_path": str(proj_path),
+                "signals_path": str(sig_path),
                 "raw_rows": int(len(raw_rows)),
                 "latest_rows": int(len(latest_rows)),
+                "raw_signal_rows": int(len(raw_signal_rows)),
+                "latest_signal_rows": int(len(latest_signal_rows)),
+                "replay_rows": int(len(replay_rows)),
+                "replay_mode": replay_mode or None,
+                "audit_source": "signals" if replay_rows else "projections",
                 "settled_rows": int(len(df_day)),
             })
             d = d + timedelta(days=1)
@@ -25681,6 +25940,7 @@ def api_live_player_props_projection_audit():
                 "days": int(days),
                 "include_rows": bool(include_rows),
                 "max_rows": int(max_rows),
+                "replay": replay_mode or None,
             },
             "overall": _ll_projection_summary(all_df),
             "by_stat": _ll_projection_rows_by_key(all_df, "stat"),
