@@ -1,0 +1,2 @@
+date,game_id,home_team,visitor_team,commence_time,home_ml,away_ml,home_spread,away_spread,home_spread_price,away_spread_price,total,total_over_price,total_under_price,books_count,bookmaker,home_tri,away_tri
+2026-05-12,,San Antonio Spurs,Minnesota Timberwolves,2026-05-13T00:10:00Z,-340.9147690409104,340.9147690409103,-10.5,10.5,-105,-115,218.5,-100.0,-100.0,10,oddsapi_consensus,SAS,MIN
