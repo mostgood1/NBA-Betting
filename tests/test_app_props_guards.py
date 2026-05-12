@@ -1475,6 +1475,86 @@ def test_api_live_player_lens_blends_adjusted_pregame_prior_into_player_projecti
     assert pts_row["pregame_margin_blended"] > 0.0
 
 
+def test_api_live_player_lens_separates_debug_and_compact_cache_entries(monkeypatch):
+    nk = app_module._norm_player_name("Devin Booker")
+    calls = {"summary": 0}
+
+    monkeypatch.setattr(app_module, "_load_best_bets_game_context", lambda _date: {"by_pair": {}})
+    monkeypatch.setattr(
+        app_module,
+        "_live_build_scoreboard_games",
+        lambda _date: (
+            "espn",
+            [
+                {
+                    "espn_event_id": "evt-1",
+                    "game_id": "001",
+                    "home": "PHX",
+                    "away": "UTA",
+                    "period": 2,
+                    "clock": "06:00",
+                    "in_progress": True,
+                    "final": False,
+                    "home_pts": 55,
+                    "away_pts": 48,
+                }
+            ],
+        ),
+    )
+
+    def _fake_summary(_eid):
+        calls["summary"] += 1
+        return {"ok": True}
+
+    monkeypatch.setattr(app_module, "_live_fetch_espn_summary", _fake_summary)
+    monkeypatch.setattr(
+        app_module,
+        "_live_extract_player_boxscore_from_espn_summary",
+        lambda _summary: [
+            {
+                "team_tri": "PHX",
+                "player": "Devin Booker",
+                "player_id": 1626164,
+                "starter": True,
+                "mp": 12,
+                "pf": 1,
+                "pts": 10,
+                "reb": 2,
+                "ast": 3,
+                "threes_made": 2,
+                "stl": 1,
+                "blk": 0,
+                "tov": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(app_module, "_live_load_props_edges_index", lambda _date: {("PHX", nk, "pts"): 20.5})
+    monkeypatch.setattr(app_module, "_live_load_props_recommendations_line_index", lambda _date: {})
+    monkeypatch.setattr(app_module, "_live_load_props_predictions_index", lambda _date: {("PHX", nk): {"pred_pts": 20.0, "roll10_min": 36.0}})
+    monkeypatch.setattr(app_module, "_live_roster_pid_by_team_nk", lambda: {("PHX", nk): 1626164})
+    monkeypatch.setattr(app_module, "_live_oddsapi_player_props_for_game", lambda _date, _home, _away: {})
+    monkeypatch.setattr(app_module, "_live_load_smart_sim_by_game_id", lambda _date, _gid: {})
+    monkeypatch.setattr(app_module, "_live_fetch_pbp_actions", lambda _gid: [])
+    monkeypatch.setattr(app_module, "_live_append_snapshot", lambda *_args, **_kwargs: None)
+
+    app_module._live_player_lens_multi_cache.clear()
+
+    with app_module.app.test_request_context("/api/live_player_lens?date=2026-03-30&event_ids=evt-1"):
+        compact_response = app_module.api_live_player_lens()
+
+    with app_module.app.test_request_context("/api/live_player_lens?date=2026-03-30&event_ids=evt-1&include_debug_rows=1"):
+        debug_response = app_module.api_live_player_lens()
+
+    compact_payload = compact_response.get_json()
+    debug_payload = debug_response.get_json()
+    compact_row = next(row for row in compact_payload["games"][0]["rows"] if row["player"] == "Devin Booker" and row["stat"] == "pts")
+    debug_row = next(row for row in debug_payload["games"][0]["rows"] if row["player"] == "Devin Booker" and row["stat"] == "pts")
+
+    assert calls["summary"] == 2
+    assert "mp" not in compact_row
+    assert debug_row["mp"] == 12
+
+
 def test_api_live_player_lens_date_only_returns_empty_payload_when_no_live_events(monkeypatch):
     monkeypatch.setattr(
         app_module,

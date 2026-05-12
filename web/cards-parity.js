@@ -3453,15 +3453,10 @@
         state.propsStripPayload = transformed;
         state.propsStripVisibleCount = Number(state.propsStripDefaultCount) || 18;
       } else {
-        const payload = await fetchApiJson(
-          `/api/cards/props-strip?date=${encodeURIComponent(dateValue)}`,
-          'Failed to load prop strip.',
-          { retries: silent ? 2 : 1 }
-        );
         if (epoch !== state.refreshEpoch || (state.payload?.date || state.date) !== dateValue) {
           return;
         }
-        state.propsStripPayload = payload;
+        state.propsStripPayload = null;
       }
       renderPropsStrip();
       if (state.payload && (state.payload.date || state.date) === dateValue) {
