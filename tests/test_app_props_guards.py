@@ -3,8 +3,10 @@ from __future__ import annotations
 import io
 import json
 import time
+from pathlib import Path
 
 import pandas as pd
+import requests
 
 import app as app_module
 
@@ -1591,6 +1593,33 @@ def test_cards_started_matchups_index_uses_live_state_cache(monkeypatch):
 
     assert started[("PHX", "UTA")]["in_progress"] is True
     assert started[("PHX", "UTA")]["period"] == 2
+
+
+def test_maybe_fetch_remote_processed_caches_misses(monkeypatch, tmp_path):
+    processed = tmp_path / "processed"
+    processed.mkdir(parents=True)
+
+    calls = {"count": 0}
+
+    class _Resp:
+        status_code = 404
+        content = b""
+
+    def _fake_get(url, timeout=None, headers=None):
+        calls["count"] += 1
+        return _Resp()
+
+    monkeypatch.setenv("ALLOW_REMOTE_ARTIFACTS", "1")
+    monkeypatch.setenv("REMOTE_PROCESSED_MISS_TTL_SEC", "900")
+    monkeypatch.setattr(app_module, "DATA_PROCESSED_DIR", Path(processed))
+    monkeypatch.setattr(requests, "get", _fake_get)
+    app_module._remote_processed_miss_cache.clear()
+
+    fname = "cards_props_snapshot_2026-05-09.json"
+
+    assert app_module._maybe_fetch_remote_processed(fname) is None
+    assert app_module._maybe_fetch_remote_processed(fname) is None
+    assert calls["count"] == 1
 
 
 def test_api_live_player_lens_date_only_returns_empty_payload_when_no_live_events(monkeypatch):

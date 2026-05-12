@@ -287,6 +287,12 @@ _live_player_lens_multi_cache: dict[str, tuple[float, dict[str, Any]]] = _Capped
     lo=0,
     hi=200,
 )
+_remote_processed_miss_cache: dict[str, float] = _CappedDict(
+    max_items_env="REMOTE_PROCESSED_MISS_CACHE_MAX_ITEMS",
+    default_max=512,
+    lo=0,
+    hi=5000,
+)
 
 # ---- Live Lens cron tick (best-effort throttling) ----
 _live_lens_tick_last_logged: dict[str, str] = {}
@@ -10494,12 +10500,18 @@ def _maybe_fetch_remote_processed(fname: str) -> Optional[Path]:
         allow = str(os.environ.get("ALLOW_REMOTE_ARTIFACTS", "0")).strip().lower() in {"1", "true", "yes"}
         if not allow:
             return None
+        miss_ttl_sec = _env_int_clamped("REMOTE_PROCESSED_MISS_TTL_SEC", 900, 0, 86400)
         # Only allow safe filenames under processed/
         if not fname or "/" in fname or ".." in fname:
             return None
         out = DATA_PROCESSED_DIR / fname
         if out.exists():
+            _remote_processed_miss_cache.pop(fname, None)
             return out
+        miss_ts = _remote_processed_miss_cache.get(fname)
+        now_ts = time.time()
+        if miss_ttl_sec > 0 and miss_ts is not None and (now_ts - float(miss_ts) < float(miss_ttl_sec)):
+            return None
         repo = os.environ.get("GITHUB_REPOSITORY") or "mostgood1/NBA-Betting"
         branch = os.environ.get("GIT_BRANCH") or os.environ.get("RENDER_GIT_BRANCH") or "main"
         url = f"https://raw.githubusercontent.com/{repo}/{branch}/data/processed/{fname}"
@@ -10513,12 +10525,17 @@ def _maybe_fetch_remote_processed(fname: str) -> Optional[Path]:
                 "Accept": "text/csv,application/octet-stream,*/*",
             })
             if r.status_code != 200 or not r.content:
+                if miss_ttl_sec > 0:
+                    _remote_processed_miss_cache[fname] = now_ts
                 return None
             out.parent.mkdir(parents=True, exist_ok=True)
             with out.open("wb") as f:
                 f.write(r.content)
+            _remote_processed_miss_cache.pop(fname, None)
             return out
         except Exception:
+            if miss_ttl_sec > 0:
+                _remote_processed_miss_cache[fname] = now_ts
             return None
     except Exception:
         return None
