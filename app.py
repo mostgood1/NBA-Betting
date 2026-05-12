@@ -18462,10 +18462,44 @@ def _cards_started_matchups_index(date_str: str, now_local: datetime | None = No
     except Exception:
         return {}
 
-    try:
-        _source, games = _live_build_scoreboard_games(date_str)
-    except Exception:
-        return {}
+    ttl = 12
+    now_ts = time.time()
+    cache_key = f"{date_str}:{ttl}"
+    ent = _live_state_cache.get(cache_key)
+    if ent and (now_ts - ent[0] < ttl):
+        payload = ent[1] if isinstance(ent[1], dict) else {}
+        games = payload.get("games") if isinstance(payload.get("games"), list) else []
+    else:
+        try:
+            source, games = _live_build_scoreboard_games(date_str)
+        except Exception:
+            return {}
+        payload = {
+            "date": date_str,
+            "ttl": ttl,
+            "source": source,
+            "games": [
+                {
+                    "game_id": g.get("game_id"),
+                    "event_id": g.get("espn_event_id"),
+                    "home": g.get("home"),
+                    "away": g.get("away"),
+                    "home_pts": g.get("home_pts"),
+                    "away_pts": g.get("away_pts"),
+                    "status_id": g.get("status_id"),
+                    "status": g.get("status"),
+                    "period": g.get("period"),
+                    "clock": g.get("clock"),
+                    "in_progress": bool(g.get("in_progress")),
+                    "final": bool(g.get("final")),
+                    "periods": g.get("periods") if isinstance(g.get("periods"), list) else [],
+                }
+                for g in (games or [])
+                if isinstance(g, dict)
+            ],
+            "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        }
+        _live_state_cache[cache_key] = (now_ts, payload)
 
     out: dict[tuple[str, str], dict[str, Any]] = {}
     for game in (games or []):

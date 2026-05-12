@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 
 import pandas as pd
 
@@ -1553,6 +1554,43 @@ def test_api_live_player_lens_separates_debug_and_compact_cache_entries(monkeypa
     assert calls["summary"] == 2
     assert "mp" not in compact_row
     assert debug_row["mp"] == 12
+
+
+def test_cards_started_matchups_index_uses_live_state_cache(monkeypatch):
+    now_local = pd.Timestamp("2026-03-30T19:00:00").to_pydatetime()
+    app_module._live_state_cache.clear()
+    app_module._live_state_cache["2026-03-30:12"] = (
+        time.time(),
+        {
+            "date": "2026-03-30",
+            "ttl": 12,
+            "games": [
+                {
+                    "game_id": "001",
+                    "home": "PHX",
+                    "away": "UTA",
+                    "home_pts": 55,
+                    "away_pts": 48,
+                    "status": "Q2 06:00",
+                    "period": 2,
+                    "clock": "06:00",
+                    "in_progress": True,
+                    "final": False,
+                    "periods": [],
+                }
+            ],
+        },
+    )
+
+    def _unexpected_scoreboard(_date):
+        raise AssertionError("scoreboard fetch should not run when live-state cache is warm")
+
+    monkeypatch.setattr(app_module, "_live_build_scoreboard_games", _unexpected_scoreboard)
+
+    started = app_module._cards_started_matchups_index("2026-03-30", now_local=now_local)
+
+    assert started[("PHX", "UTA")]["in_progress"] is True
+    assert started[("PHX", "UTA")]["period"] == 2
 
 
 def test_api_live_player_lens_date_only_returns_empty_payload_when_no_live_events(monkeypatch):
