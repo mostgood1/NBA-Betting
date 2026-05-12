@@ -729,7 +729,7 @@ def test_api_cards_enriches_each_prop_recommendation_once(tmp_path, monkeypatch)
     monkeypatch.setattr(
         app_module,
         "_load_recon_props_lookup",
-        lambda _date: (
+        lambda _date, allow_backfill=True: (
             {},
             {
                 ("PHX", app_module._norm_player_name("Devin Booker")): {"pts": 30.0},
@@ -794,6 +794,65 @@ def test_api_cards_enriches_each_prop_recommendation_once(tmp_path, monkeypatch)
     assert prop_row["top_play_reasons"] == ["Reason one"]
     assert prop_row["actual"] == 30.0
     assert prop_row["result"] == "win"
+
+
+def test_api_cards_reads_recon_props_without_backfill(tmp_path, monkeypatch):
+    processed = tmp_path / "data" / "processed"
+    processed.mkdir(parents=True)
+
+    smart_sim_path = processed / "smart_sim_2026-04-02_PHX_UTA.json"
+    smart_sim_path.write_text(
+        json.dumps(
+            {
+                "home": "PHX",
+                "away": "UTA",
+                "score": {},
+                "players": {"home": [], "away": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(app_module, "_load_smart_sim_files_for_authoritative_slate", lambda _date: [smart_sim_path])
+    monkeypatch.setattr(app_module, "_smart_sim_matchup_from_path", lambda _date, _path, prefix=None: ("PHX", "UTA"))
+    monkeypatch.setattr(
+        app_module,
+        "_load_game_odds_map",
+        lambda _date: {("PHX", "UTA"): {"home_team": "Phoenix Suns", "visitor_team": "Utah Jazz"}},
+    )
+    monkeypatch.setattr(app_module, "_load_predictions_rows_map", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_props_predictions_map", lambda _date: {})
+    monkeypatch.setattr(app_module, "_compute_player_minutes_priors", lambda _date, days_back=21: {})
+    monkeypatch.setattr(app_module, "_live_load_props_edges_index", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_props_recommendations_by_team", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_injury_context_map", lambda _date: {})
+    monkeypatch.setattr(app_module, "_roster_players_for_date", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_best_bets_game_context", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_best_bets_props_prediction_lookup", lambda _date: {})
+    monkeypatch.setattr(app_module, "_best_bets_load_injury_snapshot", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_cards_game_recommendations_index", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_cards_prop_snapshot_index", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_cards_prop_recommendations_index", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_cards_sim_detail_index", lambda _date: {})
+    monkeypatch.setattr(app_module, "_load_finals_lookup", lambda _date: {})
+    monkeypatch.setattr(app_module, "_cards_started_matchups_index", lambda _date, _now=None: {})
+    monkeypatch.setattr(app_module, "_build_cards_prop_recommendations_from_source", lambda *args, **kwargs: {"home": [], "away": []})
+    monkeypatch.setattr(app_module, "_build_cards_game_market_recommendations", lambda **kwargs: [])
+    monkeypatch.setattr(app_module, "_matchup_writeup", lambda _game: "")
+
+    calls: list[bool] = []
+
+    def _fake_load_recon_props_lookup(_date, allow_backfill=True):
+        calls.append(bool(allow_backfill))
+        return {}, {}
+
+    monkeypatch.setattr(app_module, "_load_recon_props_lookup", _fake_load_recon_props_lookup)
+
+    with app_module.app.test_request_context("/api/cards?date=2026-04-02"):
+        response = app_module.api_cards()
+
+    assert response.status_code == 200
+    assert calls == [False]
 
 
 def test_api_cards_normalizes_snapshot_names_and_backfills_roster_coverage(tmp_path, monkeypatch):

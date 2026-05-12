@@ -14974,8 +14974,8 @@ def _best_bets_settle_prop_pick(*, actual: Any, line: Any, side: Any) -> str | N
     return "WIN" if float(actual_val) < float(line_val) else "LOSS"
 
 
-@lru_cache(maxsize=16)
-def _load_recon_props_frame(date_str: str) -> tuple[pd.DataFrame, str | None]:
+@lru_cache(maxsize=32)
+def _load_recon_props_frame(date_str: str, allow_backfill: bool = True) -> tuple[pd.DataFrame, str | None]:
     recon_path = DATA_PROCESSED_DIR / f"recon_props_{date_str}.csv"
     try:
         if recon_path.exists():
@@ -15009,12 +15009,13 @@ def _load_recon_props_frame(date_str: str) -> tuple[pd.DataFrame, str | None]:
     except Exception:
         pass
 
-    try:
-        df, source_name = _maybe_backfill_recon_props_frame(date_str)
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            return df, source_name
-    except Exception:
-        pass
+    if allow_backfill:
+        try:
+            df, source_name = _maybe_backfill_recon_props_frame(date_str)
+            if isinstance(df, pd.DataFrame) and not df.empty:
+                return df, source_name
+        except Exception:
+            pass
 
     return pd.DataFrame(), None
 
@@ -15194,9 +15195,9 @@ def _backfill_recon_props_from_live_lens_artifacts(date_str: str) -> pd.DataFram
     return df
 
 
-@lru_cache(maxsize=16)
-def _load_recon_props_lookup(date_str: str) -> tuple[dict[int, dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
-    df, _ = _load_recon_props_frame(date_str)
+@lru_cache(maxsize=32)
+def _load_recon_props_lookup(date_str: str, allow_backfill: bool = True) -> tuple[dict[int, dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
+    df, _ = _load_recon_props_frame(date_str, allow_backfill=allow_backfill)
     if df is None or df.empty:
         return {}, {}
 
@@ -19664,7 +19665,7 @@ def api_cards():
     except Exception:
         recon_quarters_map = {}
     try:
-        recon_props_by_id, recon_props_by_key = _load_recon_props_lookup(d)
+        recon_props_by_id, recon_props_by_key = _load_recon_props_lookup(d, allow_backfill=False)
     except Exception:
         recon_props_by_id, recon_props_by_key = {}, {}
 
