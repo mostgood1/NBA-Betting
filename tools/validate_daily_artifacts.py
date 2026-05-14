@@ -157,6 +157,26 @@ def _count_props_recommendation_play_rows(path: Path) -> int:
         return 0
 
 
+def _detect_no_slate_day(proc: Path, date_str: str) -> tuple[bool, str | None]:
+    league_status = proc / f"league_status_{date_str}.csv"
+    try:
+        import pandas as pd
+
+        if league_status.exists() and league_status.stat().st_size > 0:
+            ldf = pd.read_csv(league_status)
+            if ldf is not None and not ldf.empty and "team_on_slate" in ldf.columns:
+                slate_mask = ldf["team_on_slate"].astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
+                try:
+                    slate_mask = slate_mask | (pd.to_numeric(ldf["team_on_slate"], errors="coerce").fillna(0.0) > 0.5)
+                except Exception:
+                    pass
+                if int(slate_mask.sum()) <= 0:
+                    return True, league_status.name
+    except Exception:
+        pass
+    return False, None
+
+
 def _parse_bool(v: object, default: bool = False) -> bool:
     if v is None:
         return default
@@ -271,6 +291,7 @@ def main() -> int:
     props_recs_play_rows = _count_props_recommendation_play_rows(props_recs)
     cards_sim_detail_games = _count_cards_sim_detail_games(cards_sim_detail)
     props_expected_teams, props_present_teams, props_missing_teams = _props_team_coverage(proc, date_str)
+    no_slate_day, no_slate_source = _detect_no_slate_day(proc, date_str)
 
     slate_games: int | None = None
     try:
@@ -377,8 +398,10 @@ def main() -> int:
         and not (props_snapshot_rows > 0 and props_edges_rows > 0 and props_recs_rows > 0)
     )
 
-    if pred_rows <= 0:
+    if pred_rows <= 0 and not no_slate_day:
         missing.append(pred.name)
+    elif pred_rows <= 0 and no_slate_day:
+        warnings.append(f"no-slate day detected from {no_slate_source}; allowing missing predictions artifact: {pred.name}")
     if props_rows <= 0:
         missing.append(props.name)
     elif props_team_gap_is_publish_blocking:
@@ -454,6 +477,8 @@ def main() -> int:
         "props_expected_teams": props_expected_teams,
         "props_present_teams": props_present_teams,
         "props_missing_teams": props_missing_teams,
+        "no_slate_day": no_slate_day,
+        "no_slate_source": no_slate_source,
         "slate_games": slate_games,
         "smart_sim_count": smart_count,
         "rotations_dir_exists": bool((proc / "rotations_espn").exists()),
