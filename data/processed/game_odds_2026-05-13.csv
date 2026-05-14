@@ -1,0 +1,2 @@
+date,commence_time,home_team,visitor_team,home_ml,away_ml,home_spread,away_spread,home_spread_price,away_spread_price,total,total_over_price,total_under_price,books_count,books_h2h,books_spreads,books_totals,bookmaker
+2026-05-13,2026-05-14T00:14:16Z,Detroit Pistons,Cleveland Cavaliers,-131.37724592029483,131.37724592029483,-1.5,1.5,-110,-120,215.5,-102.73585248556674,102.73585248556674,8,8,5,4,oddsapi_consensus
