@@ -1,11 +1,11 @@
 {
   "date": "2026-05-15",
-  "yesterday": "2026-04-17",
-  "predictions_ok": false,
+  "yesterday": null,
+  "predictions_ok": true,
   "props_predictions_ok": true,
   "game_odds_ok": true,
-  "props_snapshot_ok": true,
-  "props_snapshot_rows": 3623,
+  "props_snapshot_ok": false,
+  "props_snapshot_rows": 0,
   "props_edges_ok": true,
   "props_edges_rows": 831,
   "props_recommendations_ok": true,
@@ -26,25 +26,27 @@
     "SAS"
   ],
   "props_missing_teams": [],
-  "no_slate_day": true,
-  "no_slate_source": "league_status_2026-05-15.csv",
-  "slate_games": null,
+  "no_slate_day": false,
+  "no_slate_source": null,
+  "slate_games": 2,
   "smart_sim_count": 0,
-  "rotations_dir_exists": false,
-  "rotations_expected_games_yesterday": 0,
+  "rotations_dir_exists": true,
+  "rotations_expected_games_yesterday": null,
   "rotations_have_games_yesterday": 0,
   "rotations_min_coverage": 0.7,
   "rotations_coverage_yesterday": null,
   "rotations_missing_game_ids_yesterday": [],
   "rotations_excused_no_event_game_ids_yesterday": [],
   "rotations_error": null,
-  "require_odds": false,
+  "require_odds": true,
   "require_smartsim": true,
-  "require_props_lines": true,
-  "require_rotations_espn": false,
-  "warnings": [
-    "no-slate day detected from league_status_2026-05-15.csv; allowing missing predictions artifact: predictions_2026-05-15.csv"
+  "require_props_lines": false,
+  "require_rotations_espn": true,
+  "warnings": [],
+  "missing": [
+    "smart_sim_2026-05-15_*.json (0/2)",
+    "cards_sim_detail_2026-05-15.json (0/2)",
+    "rotations_espn stints (could not determine game ids)"
   ],
-  "missing": [],
-  "ok": true
+  "ok": false
 }

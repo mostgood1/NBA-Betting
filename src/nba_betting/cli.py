@@ -12994,6 +12994,28 @@ def predict_date_cmd(date_str: str | None, merge_odds_csv: str | None, out_path:
             return df if not df.empty else None
         except Exception:
             return None
+
+    def _build_slate_from_game_odds(date_str_local: str) -> pd.DataFrame | None:
+        try:
+            odds_path = paths.data_processed / f"game_odds_{date_str_local}.csv"
+            if not odds_path.exists():
+                return None
+            df = pd.read_csv(odds_path)
+            if df is None or df.empty:
+                return None
+            home_col = "home_team" if "home_team" in df.columns else None
+            away_col = "visitor_team" if "visitor_team" in df.columns else ("away_team" if "away_team" in df.columns else None)
+            if not home_col or not away_col:
+                return None
+            out = df[[home_col, away_col]].copy()
+            out = out.rename(columns={home_col: "home_team", away_col: "visitor_team"})
+            out["home_team"] = out["home_team"].astype(str).map(normalize_team)
+            out["visitor_team"] = out["visitor_team"].astype(str).map(normalize_team)
+            out["date"] = pd.to_datetime(date_str_local).date()
+            out = out[["date", "home_team", "visitor_team"]].dropna().drop_duplicates()
+            return out if not out.empty else None
+        except Exception:
+            return None
     try:
         # Fetch slate from ScoreboardV2
         sb = scoreboardv2.ScoreboardV2(game_date=date_str, day_offset=0, timeout=30)
@@ -13044,9 +13066,11 @@ def predict_date_cmd(date_str: str | None, merge_odds_csv: str | None, out_path:
         slate = _build_slate_from_history(date_str)
         if slate is None or slate.empty:
             slate = _build_slate_from_schedule(date_str)
+        if slate is None or slate.empty:
+            slate = _build_slate_from_game_odds(date_str)
 
     if slate is None or slate.empty:
-        console.print(f"No games found on {date_str} (API down and no history/schedule fallback).", style="yellow"); return
+        console.print(f"No games found on {date_str} (API down and no history/schedule/game-odds fallback).", style="yellow"); return
 
     # Predict
     res = _predict_from_matchups(slate)
