@@ -1167,6 +1167,84 @@ function Get-PropsRecommendationsPlayableRowCount {
   }
 }
 
+function Get-LeagueStatusSlateTeamCount {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) {
+    return 0
+  }
+  try {
+    $rows = Import-Csv -Path $Path -ErrorAction Stop
+    if ($null -eq $rows) {
+      return 0
+    }
+    return @(
+      $rows |
+        Where-Object { [string]$_.team_on_slate -match '^(1|true|yes)$' } |
+        Select-Object -ExpandProperty team -Unique
+    ).Count
+  } catch {
+    return 0
+  }
+}
+
+function Get-GameOddsSlateTeamCount {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) {
+    return 0
+  }
+  try {
+    $rows = Import-Csv -Path $Path -ErrorAction Stop
+    if ($null -eq $rows) {
+      return 0
+    }
+    $teams = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($row in @($rows)) {
+      $homeTeam = [string]$row.home_team
+      $awayTeam = [string]$row.visitor_team
+      if ([string]::IsNullOrWhiteSpace($awayTeam)) {
+        $awayTeam = [string]$row.away_team
+      }
+      if (-not [string]::IsNullOrWhiteSpace($homeTeam)) {
+        $null = $teams.Add($homeTeam.Trim())
+      }
+      if (-not [string]::IsNullOrWhiteSpace($awayTeam)) {
+        $null = $teams.Add($awayTeam.Trim())
+      }
+    }
+    return $teams.Count
+  } catch {
+    return 0
+  }
+}
+
+function Repair-LeagueStatusFromGameOdds {
+  param(
+    [string]$TargetDate,
+    [int]$TimeoutSeconds
+  )
+
+  $leagueStatusPath = Join-Path $RepoRoot ("data/processed/league_status_{0}.csv" -f $TargetDate)
+  $gameOddsPath = Join-Path $RepoRoot ("data/processed/game_odds_{0}.csv" -f $TargetDate)
+
+  $gameOddsTeams = Get-GameOddsSlateTeamCount -Path $gameOddsPath
+  $leagueStatusTeams = Get-LeagueStatusSlateTeamCount -Path $leagueStatusPath
+  Write-Log ("League-status repair check: game_odds_teams={0}, league_status_slate_teams={1}" -f $gameOddsTeams, $leagueStatusTeams)
+
+  if ($gameOddsTeams -le 0 -or $leagueStatusTeams -gt 0) {
+    return
+  }
+
+  Write-Log ("Rebuilding league_status for {0} because game_odds shows a slate but team_on_slate is empty" -f $TargetDate)
+  $rcRepair = Invoke-PyModWithTimeout -plist @('-m','nba_betting.cli','build-league-status','--date', $TargetDate) -TimeoutSeconds $TimeoutSeconds -Label 'build_league_status_post_odds'
+  Write-Log ("build-league-status post-odds exit code: {0}" -f $rcRepair)
+
+  $leagueStatusTeamsAfter = Get-LeagueStatusSlateTeamCount -Path $leagueStatusPath
+  Write-Log ("League-status repair result: league_status_slate_teams={0}" -f $leagueStatusTeamsAfter)
+  if ($gameOddsTeams -gt 0 -and $leagueStatusTeamsAfter -le 0) {
+    throw ("league_status still has no slate teams after post-odds rebuild for {0}" -f $TargetDate)
+  }
+}
+
 function Invoke-SharedPropsRefreshWorker {
   param([string]$TargetDate)
 
@@ -1890,6 +1968,13 @@ try {
     Write-Log ("odds-snapshots exit code: {0}" -f $rcOdds)
   }
 } catch { Write-Log ("odds-snapshots block failed: {0}" -f $_.Exception.Message) }
+
+try {
+  Repair-LeagueStatusFromGameOdds -TargetDate $Date -TimeoutSeconds $LeagueStatusTimeoutSeconds
+} catch {
+  Write-Log ("League-status post-odds repair failed: {0}" -f $_.Exception.Message)
+  throw
+}
 
 # 1.5) NPU game predictions using enhanced features (CSV-based; no parquet engine required)
 try {
