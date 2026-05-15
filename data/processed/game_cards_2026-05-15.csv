@@ -1,0 +1,3 @@
+date,game_id,home_team,visitor_team,commence_time,home_ml,away_ml,home_spread,away_spread,home_spread_price,away_spread_price,total,total_over_price,total_under_price,books_count,bookmaker,home_tri,away_tri
+2026-05-15,,Minnesota Timberwolves,San Antonio Spurs,2026-05-16T01:40:00Z,196.3392702524405,-196.3392702524405,5.5,-5.5,-105,-115,218.5,-100.48268372149148,100.48268372149148,11,oddsapi_consensus,MIN,SAS
+2026-05-15,,Cleveland Cavaliers,Detroit Pistons,2026-05-15T23:10:00Z,-154.5293148739203,154.52931487392027,-4.0,4.0,-110,-110,210.0,-102.13127397700342,102.13127397700345,11,oddsapi_consensus,CLE,DET

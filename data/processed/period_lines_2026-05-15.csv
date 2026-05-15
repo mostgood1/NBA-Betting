@@ -1,0 +1,3 @@
+date,home_team,visitor_team,h1_total,q1_total,q2_total,q3_total,q4_total,h1_spread,h1_home_spread_price,h1_away_spread_price,q1_spread,q1_home_spread_price,q1_away_spread_price,q2_spread,q2_home_spread_price,q2_away_spread_price,q3_spread,q3_home_spread_price,q3_away_spread_price,q4_spread,q4_home_spread_price,q4_away_spread_price
+2026-05-15,Cleveland Cavaliers,Detroit Pistons,108.0,55.0,53.5,52.5,50.0,-1.5,-110,-110,-1.0,-105,-115,-1.0,-105,-115,-1.5,110,-130,-1.5,105,-125.0
+2026-05-15,Minnesota Timberwolves,San Antonio Spurs,112.5,56.5,55.5,54.5,51.5,2.0,-110,-110,1.0,-105,-115,1.0,-105,-115,1.5,-115,-105,1.5,-120,
