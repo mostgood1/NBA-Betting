@@ -1,0 +1,5 @@
+market,side,home,away,date,ev,price,implied_prob,edge,line,pred_margin,market_home_margin,pred_total,tier
+ATS,Cleveland Cavaliers,Cleveland Cavaliers,Detroit Pistons,2026-05-15,0.022100846646913974,-110.0,0.5238095238095238,1.0657989051320982,-4.0,5.065798905132098,4.0,,Low
+TOTAL,Over,Cleveland Cavaliers,Detroit Pistons,2026-05-15,0.7453769744503309,-100.0,0.5,18.22707414913691,210.5,,,228.7270741491369,High
+ATS,Minnesota Timberwolves,Minnesota Timberwolves,San Antonio Spurs,2026-05-15,0.7193131978628137,-110.0,0.5238095238095238,15.41922871912058,5.5,9.91922871912058,-5.5,,High
+TOTAL,Over,Minnesota Timberwolves,San Antonio Spurs,2026-05-15,0.2881731761115366,-100.44325249650522,0.5011056807624715,5.971659847988832,218.5,,,224.47165984798883,High
