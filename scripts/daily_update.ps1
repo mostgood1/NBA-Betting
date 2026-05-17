@@ -1976,6 +1976,18 @@ try {
   throw
 }
 
+try {
+  $leagueStatusPathAfterRepair = Join-Path $RepoRoot ("data/processed/league_status_{0}.csv" -f $Date)
+  $leagueStatusSlateTeamsAfterRepair = Get-LeagueStatusSlateTeamCount -Path $leagueStatusPathAfterRepair
+  if ($leagueStatusSlateTeamsAfterRepair -gt 0 -and $NoSlateDay) {
+    $NoSlateDay = $false
+    $LastSlateDate = $null
+    Write-Log ("Clearing no-slate state for {0} after post-odds league_status repair ({1} slate teams)" -f $Date, $leagueStatusSlateTeamsAfterRepair)
+  }
+} catch {
+  Write-Log ("WARNING: failed to refresh no-slate state after league_status repair: {0}" -f $_.Exception.Message)
+}
+
 if (-not $NoSlateDay -and -not $predictionsRefreshed) {
   Write-Log ("Retrying predict-date for {0} after odds-snapshots and league-status repair" -f $Date)
   $predictRetryStarted = Get-Date
