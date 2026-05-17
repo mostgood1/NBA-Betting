@@ -1976,6 +1976,27 @@ try {
   throw
 }
 
+if (-not $NoSlateDay -and -not $predictionsRefreshed) {
+  Write-Log ("Retrying predict-date for {0} after odds-snapshots and league-status repair" -f $Date)
+  $predictRetryStarted = Get-Date
+  $predictionsWriteTimeBeforeRetry = $null
+  if (Test-Path $predictionsPath) {
+    try { $predictionsWriteTimeBeforeRetry = (Get-Item $predictionsPath).LastWriteTime } catch { $predictionsWriteTimeBeforeRetry = $null }
+  }
+  $rc1Retry = Invoke-PyMod -plist @('-m','nba_betting.cli','predict-date','--date', $Date)
+  Write-Log ("predict-date retry exit code: {0}" -f $rc1Retry)
+  if (Test-Path $predictionsPath) {
+    try {
+      $predictionsWriteTimeAfterRetry = (Get-Item $predictionsPath).LastWriteTime
+      if (($null -eq $predictionsWriteTimeBeforeRetry) -or ($predictionsWriteTimeAfterRetry -gt $predictionsWriteTimeBeforeRetry) -or ($predictionsWriteTimeAfterRetry -ge $predictRetryStarted.AddSeconds(-1))) {
+        $predictionsRefreshed = $true
+      }
+    } catch {
+      $predictionsRefreshed = $true
+    }
+  }
+}
+
 # 1.5) NPU game predictions using enhanced features (CSV-based; no parquet engine required)
 try {
   if ($usedPredictGamesNpuFallback -and (Test-Path $gamesPredictionsNpuPath)) {
