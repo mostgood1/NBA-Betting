@@ -1,0 +1,15 @@
+{
+  "date": "2026-05-20",
+  "team_counts": {
+    "OKC": 1
+  },
+  "players": [
+    {
+      "player": "Thomas Sorber",
+      "team": "OKC",
+      "status": "OUT"
+    }
+  ],
+  "team_key_outs": {},
+  "team_impact": {}
+}
