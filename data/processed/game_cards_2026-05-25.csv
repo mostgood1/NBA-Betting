@@ -1,0 +1,2 @@
+date,game_id,home_team,visitor_team,commence_time,home_ml,away_ml,home_spread,away_spread,total,bookmaker,home_tri,away_tri
+2026-05-25,,Cleveland Cavaliers,New York Knicks,2026-05-26T00:10:00Z,125.66141776152796,-125.66141776152796,2.5,-2.5,218.5,oddsapi_consensus,CLE,NYK
