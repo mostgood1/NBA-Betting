@@ -1,0 +1,20 @@
+{
+  "date": "2026-05-28",
+  "team_counts": {
+    "OKC": 2
+  },
+  "players": [
+    {
+      "player": "Ajay Mitchell",
+      "team": "OKC",
+      "status": "OUT"
+    },
+    {
+      "player": "Thomas Sorber",
+      "team": "OKC",
+      "status": "OUT"
+    }
+  ],
+  "team_key_outs": {},
+  "team_impact": {}
+}

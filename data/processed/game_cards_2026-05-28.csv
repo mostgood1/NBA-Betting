@@ -1,0 +1,2 @@
+date,game_id,home_team,visitor_team,commence_time,home_ml,away_ml,home_spread,away_spread,total,bookmaker,home_tri,away_tri
+2026-05-28,,San Antonio Spurs,Oklahoma City Thunder,2026-05-29T00:40:00Z,-142.34512675975924,142.34512675975918,-3.5,3.5,219.5,oddsapi_consensus,SAS,OKC
