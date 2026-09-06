@@ -10666,16 +10666,6 @@ def _american_to_b(o: Any) -> Optional[float]:
         return None
 
 
-def _ev_from_prob_and_american(p: Optional[float], odds: Any) -> Optional[float]:
-    if p is None:
-        return None
-    b = _american_to_b(odds)
-    if b is None:
-        return None
-    try:
-        return p * b - (1 - p)
-    except Exception:
-        return None
 
 
 def _has_games_for_date(date_str: str, verbose: bool = False) -> bool:
