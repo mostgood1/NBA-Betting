@@ -55,7 +55,6 @@ from .odds_api import backfill_historical_odds, OddsApiConfig, consensus_lines_a
 from .odds_api import filter_player_prop_bookmakers_df, resolve_player_prop_bookmakers, player_prop_bookmakers_csv
 from .pbp_markets import train_all_pbp_markets, predict_tip_for_date, predict_first_basket_for_date, predict_early_threes_for_date
 from .odds_api import fetch_game_odds_current
-from .odds_bovada import fetch_bovada_odds_current
 from .props_actuals import fetch_prop_actuals_via_nbastatr, upsert_props_actuals
 from .props_actuals import fetch_prop_actuals_via_nba_cdn, fetch_prop_actuals_via_nbaapi
 from .props_features import build_props_features, build_features_for_date
@@ -8635,34 +8634,8 @@ def odds_snapshots_cmd(date_str: str | None, api_key: str | None):
                 ] if c in tmp.columns]
                 out_df = tmp[cols].copy()
                 out_df["bookmaker"] = "oddsapi_consensus"
-                # Persist Bovada odds and fill any missing fields (prefer OddsAPI values)
-                try:
-                    bov = fetch_bovada_odds_current(str(target_date))
-                    if isinstance(bov, pd.DataFrame) and not bov.empty:
-                        bov = bov.rename(columns={"away_team":"visitor_team"}).copy()
-                        bov["_key"] = bov.apply(lambda r: f"{str(r.get('home_team') or '').strip()}@@{str(r.get('visitor_team') or '').strip()}", axis=1)
-                        smap = bov.set_index("_key").to_dict(orient="index")
-                        def _fill_from_bov(row):
-                            k = f"{str(row.get('home_team') or '').strip()}@@{str(row.get('visitor_team') or '').strip()}"
-                            rec = smap.get(k)
-                            if not rec:
-                                return row
-                            def _fill(col):
-                                if col in row and pd.notna(row[col]) and str(row[col]).strip() != "":
-                                    return row[col]
-                                return rec.get(col)
-                            # Fill fields only if missing
-                            for c in [
-                                "home_ml","away_ml",
-                                "home_spread","away_spread","home_spread_price","away_spread_price",
-                                "total","total_over_price","total_under_price"
-                            ]:
-                                val = _fill(c)
-                                row[c] = val
-                            return row
-                        out_df = out_df.apply(_fill_from_bov, axis=1)
-                except Exception as ex:
-                    console.print({"warning":"Bovada fill failed","error":str(ex)}, style="yellow")
+                # No Bovada fill: OddsAPI is the game-odds source (preseason included,
+                # via basketball_nba_preseason in odds_api.fetch_game_odds_current).
                 out_df.to_csv(game_odds_out, index=False)
                 console.print({"game_odds_rows": int(len(out_df)), "output": str(game_odds_out)})
             else:
@@ -13180,12 +13153,9 @@ def predict_date_cmd(date_str: str | None, merge_odds_csv: str | None, out_path:
                         odds_out_df["bookmaker"] = "oddsapi_consensus"
             except Exception as e:
                 console.print(f"OddsAPI current odds failed: {e}", style="yellow")
-        # Fallback to Bovada if still empty
-        if odds_out_df is None or odds_out_df.empty:
-            try:
-                odds_out_df = fetch_bovada_odds_current(pd.to_datetime(target_date))
-            except Exception as e:
-                console.print(f"Bovada odds fetch failed: {e}", style="yellow")
+        # NO Bovada fallback: OddsAPI is the game-odds source, and it now lists the
+        # preseason (basketball_nba_preseason) -- the gap the Bovada nba-pre-season
+        # scrape used to fill. No NBA game on OddsAPI -> no game-odds file.
         # Save standardized odds and merge
         if odds_out_df is not None and not odds_out_df.empty:
             try:
