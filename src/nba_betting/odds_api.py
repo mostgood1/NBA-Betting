@@ -20,6 +20,11 @@ from .teams import normalize_team
 
 ODDS_HOST = "https://api.the-odds-api.com"
 NBA_SPORT_KEY = "basketball_nba"
+# OddsAPI lists the NBA PRESEASON under its own sport key (like
+# `icehockey_nhl_preseason`); `basketball_nba` is empty until the regular
+# season. Game odds list events under both and price each under its own key.
+NBA_PRESEASON_SPORT_KEY = "basketball_nba_preseason"
+NBA_GAME_SPORT_KEYS = (NBA_SPORT_KEY, NBA_PRESEASON_SPORT_KEY)
 # Empty means no bookmaker allowlist. With regions='us', this keeps the full US book set.
 DEFAULT_PLAYER_PROP_BOOKMAKERS: tuple[str, ...] = tuple()
 
@@ -148,14 +153,22 @@ def fetch_game_odds_current(config: OddsApiConfig, date: datetime, markets: list
     if markets is None:
         markets = [m.strip() for m in (config.markets.split(',') if config.markets else ["h2h","spreads","totals"])]
 
-    # Fetch events and filter to the target ET calendar day
-    events_url = f"{ODDS_HOST}/v4/sports/{NBA_SPORT_KEY}/events"
-    try:
-        ev_resp = _get(events_url, {"apiKey": config.api_key})
-        events = ev_resp.json() or []
-    except Exception as e:
-        if verbose:
-            print(f"[game-odds-current] events request failed: {e}")
+    # Fetch events (regular season AND preseason) and filter to the target ET
+    # calendar day. Each event remembers which sport key listed it, because its
+    # odds must be requested under that same key.
+    events = []
+    for sport_key in NBA_GAME_SPORT_KEYS:
+        try:
+            ev_resp = _get(f"{ODDS_HOST}/v4/sports/{sport_key}/events", {"apiKey": config.api_key})
+            for ev in (ev_resp.json() or []):
+                if isinstance(ev, dict):
+                    ev.setdefault("sport_key", sport_key)
+                    events.append(ev)
+        except Exception as e:
+            if verbose:
+                print(f"[game-odds-current] events request failed for {sport_key}: {e}")
+            continue
+    if not events:
         return pd.DataFrame()
 
     target = pd.to_datetime(date).date()
@@ -196,7 +209,6 @@ def fetch_game_odds_current(config: OddsApiConfig, date: datetime, markets: list
     # For each event fetch odds and flatten
     rows: list[dict] = []
     snap = pd.Timestamp.utcnow().isoformat()
-    odds_url_tpl = f"{ODDS_HOST}/v4/sports/{NBA_SPORT_KEY}/events/{{event_id}}/odds"
     params_common = {
         "apiKey": config.api_key,
         "regions": config.regions,
@@ -205,8 +217,9 @@ def fetch_game_odds_current(config: OddsApiConfig, date: datetime, markets: list
     }
     for ev in day_events:
         eid = ev.get("id")
+        sport_key = ev.get("sport_key") or NBA_SPORT_KEY
         try:
-            r = _get(odds_url_tpl.format(event_id=eid), params_common)
+            r = _get(f"{ODDS_HOST}/v4/sports/{sport_key}/events/{eid}/odds", params_common)
             d = r.json()
             ev_obj = d if isinstance(d, dict) else None
             if not ev_obj:
