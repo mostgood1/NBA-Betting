@@ -13077,7 +13077,7 @@ def predict_date_cmd(date_str: str | None, merge_odds_csv: str | None, out_path:
                 o = float(odds)
             except Exception:
                 return pd.NA
-            if pd.isna(o):
+            if pd.isna(o) or o == 0:  # 0 is not an American price (100/(0+100) priced it as 1.0)
                 return pd.NA
             if o < 0:
                 return (-o) / ((-o) + 100.0)
